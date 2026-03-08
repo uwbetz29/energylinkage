@@ -1,17 +1,21 @@
 import type { Metadata } from "next";
-import { Roboto, Asap, Geist_Mono } from "next/font/google";
+import localFont from "next/font/local";
+import { Geist_Mono } from "next/font/google";
 import "./globals.css";
 
-const roboto = Roboto({
+const overpass = localFont({
+  src: [
+    {
+      path: "../../public/fonts/Overpass-VariableFont_wght.ttf",
+      style: "normal",
+    },
+    {
+      path: "../../public/fonts/Overpass-Italic-VariableFont_wght.ttf",
+      style: "italic",
+    },
+  ],
   variable: "--font-sans",
-  subsets: ["latin"],
-  weight: ["300", "400", "500", "700"],
-});
-
-const asap = Asap({
-  variable: "--font-asap",
-  subsets: ["latin"],
-  weight: ["400", "500", "600", "700"],
+  display: "swap",
 });
 
 const geistMono = Geist_Mono({
@@ -33,7 +37,7 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body
-        className={`${roboto.variable} ${asap.variable} ${geistMono.variable} antialiased`}
+        className={`${overpass.variable} ${geistMono.variable} antialiased`}
       >
         {children}
       </body>
