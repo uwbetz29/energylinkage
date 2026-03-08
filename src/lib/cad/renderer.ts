@@ -55,8 +55,11 @@ export class CADRenderer {
   private drawing: ParsedDrawing | null = null;
   private containerEl: HTMLElement | null = null;
   private isPanning = false;
+  private hasPanned = false;
   private panStart: Point2D = { x: 0, y: 0 };
   private cameraStart: Point2D = { x: 0, y: 0 };
+  private minimapCanvas: HTMLCanvasElement | null = null;
+  private onViewChangeCallback: (() => void) | null = null;
 
   constructor() {
     this.scene = new THREE.Scene();
@@ -580,26 +583,33 @@ export class CADRenderer {
 
     this.camera.updateProjectionMatrix();
     this.render();
+    this.notifyViewChange();
   };
 
   private onMouseDown = (event: MouseEvent): void => {
-    if (event.button === 1 || (event.button === 0 && event.shiftKey)) {
+    // Left click or middle click starts panning
+    if (event.button === 0 || event.button === 1) {
       this.isPanning = true;
+      this.hasPanned = false;
       this.panStart = { x: event.clientX, y: event.clientY };
       this.cameraStart = {
         x: (this.camera.left + this.camera.right) / 2,
         y: (this.camera.top + this.camera.bottom) / 2,
       };
-      this.renderer.domElement.style.cursor = "grabbing";
     }
   };
 
   private onMouseMove = (event: MouseEvent): void => {
     if (this.isPanning && this.containerEl) {
-      const rect = this.containerEl.getBoundingClientRect();
       const dx = event.clientX - this.panStart.x;
       const dy = event.clientY - this.panStart.y;
 
+      // Only start panning after a small threshold to allow clicks
+      if (!this.hasPanned && Math.abs(dx) < 3 && Math.abs(dy) < 3) return;
+      this.hasPanned = true;
+      this.renderer.domElement.style.cursor = "grabbing";
+
+      const rect = this.containerEl.getBoundingClientRect();
       const worldWidth = this.camera.right - this.camera.left;
       const worldHeight = this.camera.top - this.camera.bottom;
 
@@ -617,6 +627,7 @@ export class CADRenderer {
       this.camera.bottom = newCenterY - halfHeight;
       this.camera.updateProjectionMatrix();
       this.render();
+      this.notifyViewChange();
     }
   };
 
@@ -624,6 +635,11 @@ export class CADRenderer {
     this.isPanning = false;
     this.renderer.domElement.style.cursor = "default";
   };
+
+  /** Returns true if the user just finished a drag (not a click) */
+  didPan(): boolean {
+    return this.hasPanned;
+  }
 
   private onResize = (): void => {
     if (!this.containerEl) return;
@@ -633,5 +649,128 @@ export class CADRenderer {
       this.fitToView();
     }
     this.render();
+    this.notifyViewChange();
   };
+
+  // --- Minimap support ---
+
+  onViewChange(callback: () => void): void {
+    this.onViewChangeCallback = callback;
+  }
+
+  private notifyViewChange(): void {
+    this.onViewChangeCallback?.();
+  }
+
+  /** Returns the current viewport rect in world coordinates */
+  getViewport(): { left: number; right: number; top: number; bottom: number } {
+    return {
+      left: this.camera.left,
+      right: this.camera.right,
+      top: this.camera.top,
+      bottom: this.camera.bottom,
+    };
+  }
+
+  /** Pan the camera to center on a world-coordinate point */
+  panTo(worldX: number, worldY: number): void {
+    const halfW = (this.camera.right - this.camera.left) / 2;
+    const halfH = (this.camera.top - this.camera.bottom) / 2;
+    this.camera.left = worldX - halfW;
+    this.camera.right = worldX + halfW;
+    this.camera.top = worldY + halfH;
+    this.camera.bottom = worldY - halfH;
+    this.camera.updateProjectionMatrix();
+    this.render();
+    this.notifyViewChange();
+  }
+
+  /** Render a thumbnail of the full drawing onto a minimap canvas */
+  renderMinimap(canvas: HTMLCanvasElement): void {
+    if (!this.drawing) return;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+
+    const { bounds } = this.drawing;
+    const dw = bounds.max.x - bounds.min.x;
+    const dh = bounds.max.y - bounds.min.y;
+    if (dw === 0 || dh === 0) return;
+
+    const cw = canvas.width;
+    const ch = canvas.height;
+    const padding = 0.05;
+
+    // Compute scale to fit drawing into canvas
+    const scaleX = cw / (dw * (1 + padding * 2));
+    const scaleY = ch / (dh * (1 + padding * 2));
+    const scale = Math.min(scaleX, scaleY);
+
+    const offsetX = (cw - dw * scale) / 2 - bounds.min.x * scale;
+    const offsetY = (ch - dh * scale) / 2 + bounds.max.y * scale; // Y flipped
+
+    ctx.clearRect(0, 0, cw, ch);
+
+    // Draw background
+    ctx.fillStyle = "#F8F8F8";
+    ctx.fillRect(0, 0, cw, ch);
+
+    // Draw entities (simplified — lines only for performance)
+    ctx.strokeStyle = "#999";
+    ctx.lineWidth = 0.5;
+    ctx.beginPath();
+    for (const entity of this.drawing.entities) {
+      if (entity.vertices && entity.vertices.length >= 2) {
+        const v0 = entity.vertices[0];
+        ctx.moveTo(v0.x * scale + offsetX, -v0.y * scale + offsetY);
+        for (let i = 1; i < entity.vertices.length; i++) {
+          const v = entity.vertices[i];
+          ctx.lineTo(v.x * scale + offsetX, -v.y * scale + offsetY);
+        }
+      } else if (entity.center && entity.radius) {
+        const cx = entity.center.x * scale + offsetX;
+        const cy = -entity.center.y * scale + offsetY;
+        const r = entity.radius * scale;
+        ctx.moveTo(cx + r, cy);
+        ctx.arc(cx, cy, Math.max(0.5, r), 0, Math.PI * 2);
+      }
+    }
+    ctx.stroke();
+
+    // Draw viewport rectangle
+    const vp = this.getViewport();
+    const vpX = vp.left * scale + offsetX;
+    const vpY = -vp.top * scale + offsetY;
+    const vpW = (vp.right - vp.left) * scale;
+    const vpH = (vp.top - vp.bottom) * scale;
+
+    ctx.strokeStyle = "#3B82F6";
+    ctx.lineWidth = 2;
+    ctx.strokeRect(vpX, vpY, vpW, vpH);
+    ctx.fillStyle = "rgba(59, 130, 246, 0.08)";
+    ctx.fillRect(vpX, vpY, vpW, vpH);
+  }
+
+  /** Convert minimap pixel coords to world coords for click-to-pan */
+  minimapToWorld(canvasX: number, canvasY: number, canvas: HTMLCanvasElement): Point2D {
+    if (!this.drawing) return { x: 0, y: 0 };
+    const { bounds } = this.drawing;
+    const dw = bounds.max.x - bounds.min.x;
+    const dh = bounds.max.y - bounds.min.y;
+
+    const cw = canvas.width;
+    const ch = canvas.height;
+    const padding = 0.05;
+
+    const scaleX = cw / (dw * (1 + padding * 2));
+    const scaleY = ch / (dh * (1 + padding * 2));
+    const scale = Math.min(scaleX, scaleY);
+
+    const offsetX = (cw - dw * scale) / 2 - bounds.min.x * scale;
+    const offsetY = (ch - dh * scale) / 2 + bounds.max.y * scale;
+
+    return {
+      x: (canvasX - offsetX) / scale,
+      y: -(canvasY - offsetY) / scale,
+    };
+  }
 }

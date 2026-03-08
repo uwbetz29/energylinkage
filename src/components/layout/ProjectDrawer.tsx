@@ -27,7 +27,6 @@ import {
   Pencil,
   Clock,
   Home,
-  Ruler,
 } from "lucide-react";
 
 function timeAgo(dateStr: string): string {
@@ -125,12 +124,7 @@ export function ProjectDrawer({ open, onOpenChange }: ProjectDrawerProps) {
         <SheetContent side="left" className="w-80 p-0 flex flex-col">
           <SheetHeader className="p-4 pb-0">
             <div className="flex items-center gap-2">
-              <div className="w-6 h-6 bg-[#93C90F] rounded flex items-center justify-center">
-                <Ruler className="w-3 h-3 text-white" />
-              </div>
-              <SheetTitle className="text-sm font-semibold tracking-tight">
-                EnergyLink <span className="text-[#93C90F]">FLEX</span>
-              </SheetTitle>
+              <img src="/logo.png" alt="EnergyLink FLEX" className="h-6 w-auto" />
             </div>
           </SheetHeader>
 

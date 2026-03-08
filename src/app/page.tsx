@@ -20,6 +20,7 @@ import {
   Clock,
   FileText,
 } from "lucide-react";
+import Image from "next/image";
 
 function timeAgo(dateStr: string): string {
   const now = Date.now();
@@ -119,12 +120,15 @@ export default function StartPage() {
 
       {/* Center content */}
       <div className="flex-1 flex flex-col items-center justify-center pb-20">
-        {/* Logo */}
-        <h1 className="text-5xl font-bold tracking-tight mb-4">
-          <span className="text-[#222]">Energy</span>
-          <span className="text-[#222]">Link</span>{" "}
-          <span className="text-[#93C90F]">FLEX</span>
-        </h1>
+        {/* Logo — shift left so the text portion is visually centered */}
+        <Image
+          src="/logo.png"
+          alt="EnergyLink FLEX"
+          width={562}
+          height={149}
+          className="mb-4 w-[400px] h-auto -translate-x-[30px]"
+          priority
+        />
 
         {/* Greeting */}
         <p className="text-xl text-[#555] mb-12">

@@ -12,9 +12,9 @@ import {
   RotateCcw,
   Layers,
   MousePointer,
-  Ruler,
   Menu,
 } from "lucide-react";
+import Image from "next/image";
 
 interface ToolbarProps {
   onToggleLayers?: () => void;
@@ -111,19 +111,12 @@ export function Toolbar({ onToggleLayers, showLayers, onMenuClick, projectName }
         <Menu className="w-4 h-4" />
       </ToolbarButton>
       <div className="flex items-center gap-2 mr-3">
-        <div className="w-6 h-6 bg-[#93C90F] rounded flex items-center justify-center">
-          <Ruler className="w-3 h-3 text-white" />
-        </div>
-        <div className="flex flex-col">
-          <span className="text-sm font-semibold tracking-tight leading-none">
-            EnergyLink <span className="text-[#93C90F]">FLEX</span>
+        <Image src="/logo.png" alt="EnergyLink FLEX" width={562} height={149} className="h-7 w-auto" />
+        {projectName && (
+          <span className="text-[10px] text-[#999] leading-none truncate max-w-[150px]">
+            {projectName}
           </span>
-          {projectName && (
-            <span className="text-[10px] text-[#999] leading-none mt-0.5 truncate max-w-[150px]">
-              {projectName}
-            </span>
-          )}
-        </div>
+        )}
       </div>
 
       <Separator orientation="vertical" className="h-6 mx-1" />

@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import type { Project, ProjectDrawing } from "./types";
 
-const STORAGE_KEY = "energylinkage-projects";
+const STORAGE_KEY = "energylink-flex-projects";
 
 function generateId(): string {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
@@ -48,7 +48,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
   loadFromStorage: () => {
     const projects = loadProjects();
     const lastProjectId = typeof window !== "undefined"
-      ? localStorage.getItem("energylinkage-current-project")
+      ? localStorage.getItem("energylink-flex-current-project")
       : null;
     set({ projects, isLoaded: true, currentProjectId: lastProjectId });
   },
@@ -66,13 +66,13 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     const projects = [...get().projects, project];
     saveProjects(projects);
     set({ projects, currentProjectId: project.id });
-    localStorage.setItem("energylinkage-current-project", project.id);
+    localStorage.setItem("energylink-flex-current-project", project.id);
     return project;
   },
 
   openProject: (id: string) => {
     set({ currentProjectId: id });
-    localStorage.setItem("energylinkage-current-project", id);
+    localStorage.setItem("energylink-flex-current-project", id);
   },
 
   deleteProject: (id: string) => {
@@ -84,7 +84,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       currentProjectId: currentProjectId === id ? null : currentProjectId,
     });
     if (currentProjectId === id) {
-      localStorage.removeItem("energylinkage-current-project");
+      localStorage.removeItem("energylink-flex-current-project");
     }
   },
 
@@ -138,6 +138,6 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
 
   closeProject: () => {
     set({ currentProjectId: null });
-    localStorage.removeItem("energylinkage-current-project");
+    localStorage.removeItem("energylink-flex-current-project");
   },
 }));

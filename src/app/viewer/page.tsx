@@ -70,7 +70,7 @@ export default function ViewerPage() {
       <div className="h-6 bg-[#F6F6F6] border-t border-[#E7E7E7] flex items-center px-3 text-[10px] text-[#888]">
         <span>EnergyLink FLEX v0.1.0</span>
         <span className="mx-2">|</span>
-        <span>Shift+Click to pan, Scroll to zoom</span>
+        <span>Click+Drag to pan, Scroll to zoom</span>
       </div>
 
       {/* Project drawer */}
