@@ -91,11 +91,19 @@ export interface ParsedEntity {
   startAngle?: number;
   endAngle?: number;
   text?: string;
+  textHeight?: number;
   insertionPoint?: Point2D;
   blockName?: string;
   scaleX?: number;
   scaleY?: number;
   rotation?: number;
+  closed?: boolean;
+  bulges?: number[];
+  // For ELLIPSE entities
+  majorAxisEnd?: Point2D;
+  axisRatio?: number;
+  // For SPLINE entities
+  splineDegree?: number;
   // For DIMENSION entities
   dimensionType?: number;
   measurementValue?: number;

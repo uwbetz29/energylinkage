@@ -129,7 +129,7 @@ export function ProjectDrawer({ open, onOpenChange }: ProjectDrawerProps) {
                 <Ruler className="w-3 h-3 text-white" />
               </div>
               <SheetTitle className="text-sm font-semibold tracking-tight">
-                ENERGY<span className="text-[#00BFDD]">LINK</span>
+                EnergyLink <span className="text-[#93C90F]">FLEX</span>
               </SheetTitle>
             </div>
           </SheetHeader>

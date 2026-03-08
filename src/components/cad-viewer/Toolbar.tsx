@@ -116,7 +116,7 @@ export function Toolbar({ onToggleLayers, showLayers, onMenuClick, projectName }
         </div>
         <div className="flex flex-col">
           <span className="text-sm font-semibold tracking-tight leading-none">
-            ENERGY<span className="text-[#00BFDD]">LINK</span>
+            EnergyLink <span className="text-[#93C90F]">FLEX</span>
           </span>
           {projectName && (
             <span className="text-[10px] text-[#999] leading-none mt-0.5 truncate max-w-[150px]">

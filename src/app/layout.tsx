@@ -24,7 +24,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "EnergyLinkage - Power Generation Drawing Scaling Tool",
+  title: "EnergyLink FLEX - Power Generation Drawing Scaling Tool",
   description:
     "Scale power generation CAD drawing components in seconds. Upload DXF/DWG drawings, click components, enter new dimensions, and export updated drawings.",
 };

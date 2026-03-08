@@ -1,5 +1,5 @@
 // Three.js rendering engine for DXF drawings
-// Converts parsed DXF entities into Three.js objects on a 2D orthographic scene
+// Renders pre-flattened entities (INSERT references already expanded by parser)
 
 import * as THREE from "three";
 import type {
@@ -9,7 +9,7 @@ import type {
   Point2D,
 } from "@/types/cad";
 
-// DXF color index to hex (subset of the 256 ACI colors)
+// DXF ACI color index to hex (common colors)
 const DXF_COLORS: Record<number, string> = {
   0: "#000000", // BYBLOCK
   1: "#FF0000",
@@ -18,33 +18,31 @@ const DXF_COLORS: Record<number, string> = {
   4: "#00FFFF",
   5: "#0000FF",
   6: "#FF00FF",
-  7: "#FFFFFF",
+  7: "#222222", // White → dark for light bg
   8: "#808080",
   9: "#C0C0C0",
+  10: "#FF0000", 11: "#FF7F7F", 12: "#CC0000",
+  20: "#FFAA00", 30: "#FF7F00", 40: "#FF5500",
+  50: "#FFFF00", 60: "#BFBF00",
+  70: "#00FF00", 80: "#00BF00",
+  90: "#00FFFF", 100: "#00BFBF",
+  110: "#0000FF", 120: "#0000BF",
+  130: "#FF00FF", 140: "#BF00BF",
+  150: "#FF007F", 160: "#BF005F",
+  170: "#7F0000", 180: "#7F3F00",
+  190: "#7F7F00", 200: "#3F7F00",
+  210: "#007F00", 220: "#007F3F",
+  230: "#007F7F", 240: "#003F7F",
+  250: "#333333", 251: "#464646", 252: "#585858",
+  253: "#6B6B6B", 254: "#808080", 255: "#EBEBEB",
 };
 
 function dxfColorToHex(colorIndex: number | undefined): string {
-  if (colorIndex === undefined) return "#333333";
-  // Color 7 is white in DXF, but on a light background we want it dark
-  if (colorIndex === 7) return "#222222";
+  if (colorIndex === undefined || colorIndex === null) return "#333333";
+  if (colorIndex === 7) return "#222222"; // White in DXF → dark on light bg
+  if (colorIndex < 0) return "#333333"; // Negative = layer frozen
   return DXF_COLORS[colorIndex] || "#333333";
 }
-
-export interface RendererOptions {
-  backgroundColor?: string;
-  defaultColor?: string;
-  highlightColor?: string;
-  hoverColor?: string;
-  lineWidth?: number;
-}
-
-const DEFAULT_OPTIONS: RendererOptions = {
-  backgroundColor: "#FFFFFF",
-  defaultColor: "#333333",
-  highlightColor: "#93C90F",
-  hoverColor: "#00BFDD",
-  lineWidth: 1,
-};
 
 export class CADRenderer {
   private scene: THREE.Scene;
@@ -54,17 +52,15 @@ export class CADRenderer {
   private mouse: THREE.Vector2;
   private entityMap: Map<string, THREE.Object3D> = new Map();
   private componentGroups: Map<string, THREE.Group> = new Map();
-  private options: RendererOptions;
   private drawing: ParsedDrawing | null = null;
   private containerEl: HTMLElement | null = null;
   private isPanning = false;
   private panStart: Point2D = { x: 0, y: 0 };
   private cameraStart: Point2D = { x: 0, y: 0 };
 
-  constructor(options: Partial<RendererOptions> = {}) {
-    this.options = { ...DEFAULT_OPTIONS, ...options };
+  constructor() {
     this.scene = new THREE.Scene();
-    this.scene.background = new THREE.Color(this.options.backgroundColor!);
+    this.scene.background = new THREE.Color("#FFFFFF");
 
     this.camera = new THREE.OrthographicCamera(-100, 100, 100, -100, -1000, 1000);
     this.camera.position.z = 100;
@@ -82,12 +78,10 @@ export class CADRenderer {
     this.renderer.setPixelRatio(window.devicePixelRatio);
     container.appendChild(this.renderer.domElement);
 
-    // Event listeners
     this.renderer.domElement.addEventListener("wheel", this.onWheel);
     this.renderer.domElement.addEventListener("mousedown", this.onMouseDown);
     this.renderer.domElement.addEventListener("mousemove", this.onMouseMove);
     this.renderer.domElement.addEventListener("mouseup", this.onMouseUp);
-
     window.addEventListener("resize", this.onResize);
     this.onResize();
   }
@@ -125,7 +119,6 @@ export class CADRenderer {
       group.userData = { componentId: component.id, componentName: component.name };
       this.componentGroups.set(component.id, group);
 
-      // Create a bounding box overlay for the component
       const bb = component.boundingBox;
       const geometry = new THREE.BufferGeometry();
       const vertices = new Float32Array([
@@ -138,11 +131,7 @@ export class CADRenderer {
       geometry.setAttribute("position", new THREE.BufferAttribute(vertices, 3));
       const line = new THREE.Line(
         geometry,
-        new THREE.LineBasicMaterial({
-          color: component.color,
-          transparent: true,
-          opacity: 0,
-        })
+        new THREE.LineBasicMaterial({ color: component.color, transparent: true, opacity: 0 })
       );
       line.userData = { componentId: component.id, isOverlay: true };
       group.add(line);
@@ -166,9 +155,18 @@ export class CADRenderer {
         return this.createCircle(entity, color);
       case "ARC":
         return this.createArc(entity, color);
+      case "ELLIPSE":
+        return this.createEllipse(entity, color);
+      case "SPLINE":
+        return this.createSpline(entity, color);
       case "TEXT":
       case "MTEXT":
         return this.createText(entity, color);
+      case "SOLID":
+      case "3DFACE":
+        return this.createSolid(entity, color);
+      case "LEADER":
+        return this.createLine(entity, color);
       default:
         return null;
     }
@@ -177,45 +175,103 @@ export class CADRenderer {
   private createLine(entity: ParsedEntity, color: string): THREE.Line | null {
     if (!entity.vertices || entity.vertices.length < 2) return null;
     const geometry = new THREE.BufferGeometry();
-    const vertices = new Float32Array(
-      entity.vertices.flatMap((v) => [v.x, v.y, 0])
-    );
-    geometry.setAttribute("position", new THREE.BufferAttribute(vertices, 3));
-    return new THREE.Line(
-      geometry,
-      new THREE.LineBasicMaterial({ color })
-    );
+    const verts = new Float32Array(entity.vertices.flatMap((v) => [v.x, v.y, 0]));
+    geometry.setAttribute("position", new THREE.BufferAttribute(verts, 3));
+    return new THREE.Line(geometry, new THREE.LineBasicMaterial({ color }));
   }
 
-  private createPolyline(entity: ParsedEntity, color: string): THREE.Line | null {
+  private createPolyline(entity: ParsedEntity, color: string): THREE.Object3D | null {
     if (!entity.vertices || entity.vertices.length < 2) return null;
+
+    // If there are bulges, we need to handle curved segments
+    if (entity.bulges && entity.bulges.some((b) => b !== 0)) {
+      return this.createBulgePolyline(entity, color);
+    }
+
+    const pts = [...entity.vertices];
+    if (entity.closed && pts.length > 2) {
+      pts.push(pts[0]); // Close the polyline
+    }
+
     const geometry = new THREE.BufferGeometry();
-    const vertices = new Float32Array(
-      entity.vertices.flatMap((v) => [v.x, v.y, 0])
-    );
-    geometry.setAttribute("position", new THREE.BufferAttribute(vertices, 3));
-    return new THREE.Line(
-      geometry,
-      new THREE.LineBasicMaterial({ color })
-    );
+    const verts = new Float32Array(pts.flatMap((v) => [v.x, v.y, 0]));
+    geometry.setAttribute("position", new THREE.BufferAttribute(verts, 3));
+    return new THREE.Line(geometry, new THREE.LineBasicMaterial({ color }));
+  }
+
+  private createBulgePolyline(entity: ParsedEntity, color: string): THREE.Line | null {
+    if (!entity.vertices || !entity.bulges) return null;
+
+    const allPoints: number[] = [];
+    const verts = entity.vertices;
+    const bulges = entity.bulges;
+    const len = entity.closed ? verts.length : verts.length - 1;
+
+    for (let i = 0; i < len; i++) {
+      const p1 = verts[i];
+      const p2 = verts[(i + 1) % verts.length];
+      const bulge = bulges[i] || 0;
+
+      if (Math.abs(bulge) < 1e-6) {
+        // Straight segment
+        allPoints.push(p1.x, p1.y, 0);
+      } else {
+        // Arc segment defined by bulge
+        const dx = p2.x - p1.x;
+        const dy = p2.y - p1.y;
+        const d = Math.sqrt(dx * dx + dy * dy);
+        const s = d / 2;
+        const r = Math.abs(s * (1 + bulge * bulge) / (2 * bulge));
+        const a = Math.atan2(dy, dx);
+        const midX = (p1.x + p2.x) / 2;
+        const midY = (p1.y + p2.y) / 2;
+        const sagitta = bulge * s;
+        const cx = midX - sagitta * Math.sin(a);
+        const cy = midY + sagitta * Math.cos(a);
+
+        const startAngle = Math.atan2(p1.y - cy, p1.x - cx);
+        const endAngle = Math.atan2(p2.y - cy, p2.x - cx);
+        let sweep = endAngle - startAngle;
+        if (bulge > 0 && sweep < 0) sweep += 2 * Math.PI;
+        if (bulge < 0 && sweep > 0) sweep -= 2 * Math.PI;
+
+        const segments = Math.max(8, Math.floor(Math.abs(sweep) * 16));
+        for (let j = 0; j <= segments; j++) {
+          const angle = startAngle + (j / segments) * sweep;
+          allPoints.push(
+            cx + r * Math.cos(angle),
+            cy + r * Math.sin(angle),
+            0
+          );
+        }
+      }
+    }
+
+    // Add the last point if not closed
+    if (!entity.closed && verts.length > 0) {
+      const last = verts[verts.length - 1];
+      allPoints.push(last.x, last.y, 0);
+    }
+
+    if (allPoints.length < 6) return null;
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute("position", new THREE.BufferAttribute(new Float32Array(allPoints), 3));
+    return new THREE.Line(geometry, new THREE.LineBasicMaterial({ color }));
   }
 
   private createCircle(entity: ParsedEntity, color: string): THREE.Line | null {
     if (!entity.center || !entity.radius) return null;
     const segments = 64;
     const geometry = new THREE.BufferGeometry();
-    const vertices = new Float32Array((segments + 1) * 3);
+    const verts = new Float32Array((segments + 1) * 3);
     for (let i = 0; i <= segments; i++) {
       const angle = (i / segments) * Math.PI * 2;
-      vertices[i * 3] = entity.center.x + Math.cos(angle) * entity.radius;
-      vertices[i * 3 + 1] = entity.center.y + Math.sin(angle) * entity.radius;
-      vertices[i * 3 + 2] = 0;
+      verts[i * 3] = entity.center.x + Math.cos(angle) * entity.radius;
+      verts[i * 3 + 1] = entity.center.y + Math.sin(angle) * entity.radius;
+      verts[i * 3 + 2] = 0;
     }
-    geometry.setAttribute("position", new THREE.BufferAttribute(vertices, 3));
-    return new THREE.Line(
-      geometry,
-      new THREE.LineBasicMaterial({ color })
-    );
+    geometry.setAttribute("position", new THREE.BufferAttribute(verts, 3));
+    return new THREE.Line(geometry, new THREE.LineBasicMaterial({ color }));
   }
 
   private createArc(entity: ParsedEntity, color: string): THREE.Line | null {
@@ -224,21 +280,81 @@ export class CADRenderer {
     const endAngle = ((entity.endAngle || 360) * Math.PI) / 180;
     let angleDiff = endAngle - startAngle;
     if (angleDiff < 0) angleDiff += Math.PI * 2;
+    if (angleDiff > Math.PI * 2) angleDiff -= Math.PI * 2;
 
     const segments = Math.max(16, Math.floor(angleDiff * 32));
     const geometry = new THREE.BufferGeometry();
-    const vertices = new Float32Array((segments + 1) * 3);
+    const verts = new Float32Array((segments + 1) * 3);
     for (let i = 0; i <= segments; i++) {
       const angle = startAngle + (i / segments) * angleDiff;
-      vertices[i * 3] = entity.center.x + Math.cos(angle) * entity.radius;
-      vertices[i * 3 + 1] = entity.center.y + Math.sin(angle) * entity.radius;
-      vertices[i * 3 + 2] = 0;
+      verts[i * 3] = entity.center.x + Math.cos(angle) * entity.radius;
+      verts[i * 3 + 1] = entity.center.y + Math.sin(angle) * entity.radius;
+      verts[i * 3 + 2] = 0;
     }
-    geometry.setAttribute("position", new THREE.BufferAttribute(vertices, 3));
-    return new THREE.Line(
-      geometry,
-      new THREE.LineBasicMaterial({ color })
+    geometry.setAttribute("position", new THREE.BufferAttribute(verts, 3));
+    return new THREE.Line(geometry, new THREE.LineBasicMaterial({ color }));
+  }
+
+  private createEllipse(entity: ParsedEntity, color: string): THREE.Line | null {
+    if (!entity.center || !entity.majorAxisEnd) return null;
+
+    const cx = entity.center.x;
+    const cy = entity.center.y;
+    const mx = entity.majorAxisEnd.x;
+    const my = entity.majorAxisEnd.y;
+    const ratio = entity.axisRatio ?? 1;
+
+    const majorLen = Math.sqrt(mx * mx + my * my);
+    const minorLen = majorLen * ratio;
+    const rotation = Math.atan2(my, mx);
+
+    // startAngle/endAngle for ellipses are in radians (eccentric anomaly)
+    const sa = entity.startAngle ?? 0;
+    const ea = entity.endAngle ?? Math.PI * 2;
+    let sweep = ea - sa;
+    if (sweep < 0) sweep += Math.PI * 2;
+
+    const segments = 64;
+    const geometry = new THREE.BufferGeometry();
+    const verts = new Float32Array((segments + 1) * 3);
+
+    for (let i = 0; i <= segments; i++) {
+      const t = sa + (i / segments) * sweep;
+      const lx = majorLen * Math.cos(t);
+      const ly = minorLen * Math.sin(t);
+      // Rotate to the ellipse's axis
+      verts[i * 3] = cx + lx * Math.cos(rotation) - ly * Math.sin(rotation);
+      verts[i * 3 + 1] = cy + lx * Math.sin(rotation) + ly * Math.cos(rotation);
+      verts[i * 3 + 2] = 0;
+    }
+
+    geometry.setAttribute("position", new THREE.BufferAttribute(verts, 3));
+    return new THREE.Line(geometry, new THREE.LineBasicMaterial({ color }));
+  }
+
+  private createSpline(entity: ParsedEntity, color: string): THREE.Line | null {
+    if (!entity.vertices || entity.vertices.length < 2) return null;
+
+    // For fit points or low-degree splines, interpolate with Catmull-Rom
+    const pts = entity.vertices;
+    if (pts.length <= 3) {
+      // Not enough points to interpolate, just connect them
+      const geometry = new THREE.BufferGeometry();
+      const verts = new Float32Array(pts.flatMap((v) => [v.x, v.y, 0]));
+      geometry.setAttribute("position", new THREE.BufferAttribute(verts, 3));
+      return new THREE.Line(geometry, new THREE.LineBasicMaterial({ color }));
+    }
+
+    // Use Catmull-Rom interpolation for smooth curves
+    const curve = new THREE.CatmullRomCurve3(
+      pts.map((p) => new THREE.Vector3(p.x, p.y, 0)),
+      false
     );
+    const points = curve.getPoints(pts.length * 8);
+    const geometry = new THREE.BufferGeometry();
+    const verts = new Float32Array(points.flatMap((p) => [p.x, p.y, p.z]));
+    geometry.setAttribute("position", new THREE.BufferAttribute(verts, 3));
+    return new THREE.Line(geometry, new THREE.LineBasicMaterial({ color }));
   }
 
   private createText(entity: ParsedEntity, _color: string): THREE.Sprite | null {
@@ -248,29 +364,61 @@ export class CADRenderer {
     const ctx = canvas.getContext("2d");
     if (!ctx) return null;
 
-    const fontSize = 14;
-    canvas.width = Math.max(256, entity.text.length * fontSize);
-    canvas.height = fontSize * 2;
+    // Use text height from entity to determine font size
+    const textHeight = entity.textHeight || 0.1;
+    const displayText = entity.text.replace(/\n/g, " ");
 
+    // Create canvas sized for the text
+    const pixelsPerUnit = 100; // Higher = more detail
+    const fontSize = Math.max(12, Math.round(textHeight * pixelsPerUnit));
+    ctx.font = `${fontSize}px sans-serif`;
+    const metrics = ctx.measureText(displayText);
+
+    canvas.width = Math.min(4096, Math.ceil(metrics.width) + 4);
+    canvas.height = Math.ceil(fontSize * 1.3);
+
+    // Re-set font after resize
+    ctx.font = `${fontSize}px sans-serif`;
     ctx.fillStyle = "#333333";
-    ctx.font = `${fontSize}px monospace`;
-    ctx.fillText(entity.text, 0, fontSize);
+    ctx.textBaseline = "bottom";
+    ctx.fillText(displayText, 2, canvas.height - 2);
 
     const texture = new THREE.CanvasTexture(canvas);
     texture.minFilter = THREE.LinearFilter;
-    const material = new THREE.SpriteMaterial({
-      map: texture,
-      transparent: true,
-    });
+    texture.magFilter = THREE.LinearFilter;
+
+    const material = new THREE.SpriteMaterial({ map: texture, transparent: true });
     const sprite = new THREE.Sprite(material);
     sprite.position.set(entity.insertionPoint.x, entity.insertionPoint.y, 1);
 
-    // Scale sprite based on text length
-    const aspect = canvas.width / canvas.height;
-    const scale = 5; // Base scale factor
-    sprite.scale.set(scale * aspect, scale, 1);
+    // Scale sprite to match world units
+    const worldWidth = (canvas.width / pixelsPerUnit) * (textHeight / (fontSize / pixelsPerUnit));
+    const worldHeight = (canvas.height / pixelsPerUnit) * (textHeight / (fontSize / pixelsPerUnit));
+    sprite.scale.set(worldWidth, worldHeight, 1);
+
+    // Offset so text is anchored at bottom-left (not center)
+    sprite.center.set(0, 0);
 
     return sprite;
+  }
+
+  private createSolid(entity: ParsedEntity, color: string): THREE.Line | null {
+    if (!entity.vertices || entity.vertices.length < 3) return null;
+
+    // SOLID entities have a specific vertex order: 1, 2, 4, 3 (swapped last two)
+    const pts = [...entity.vertices];
+    if (pts.length === 4) {
+      // Swap to get correct rendering order
+      const temp = pts[2];
+      pts[2] = pts[3];
+      pts[3] = temp;
+    }
+    pts.push(pts[0]); // Close
+
+    const geometry = new THREE.BufferGeometry();
+    const verts = new Float32Array(pts.flatMap((v) => [v.x, v.y, 0]));
+    geometry.setAttribute("position", new THREE.BufferAttribute(verts, 3));
+    return new THREE.Line(geometry, new THREE.LineBasicMaterial({ color }));
   }
 
   fitToView(): void {
@@ -284,7 +432,7 @@ export class CADRenderer {
     const centerY = (bounds.min.y + bounds.max.y) / 2;
 
     const aspect = width / height;
-    const padding = 1.1; // 10% padding
+    const padding = 1.05;
 
     let viewWidth, viewHeight;
     if (drawingWidth / drawingHeight > aspect) {
@@ -304,15 +452,15 @@ export class CADRenderer {
   }
 
   highlightComponent(componentId: string | null, color?: string): void {
-    // Reset all component overlays
+    const highlightColor = color || "#93C90F";
+
     for (const [id, group] of this.componentGroups) {
       group.traverse((child) => {
         if (child instanceof THREE.Line && child.userData.isOverlay) {
           const mat = child.material as THREE.LineBasicMaterial;
           if (id === componentId) {
             mat.opacity = 0.8;
-            mat.color.set(color || this.options.highlightColor!);
-            mat.linewidth = 2;
+            mat.color.set(highlightColor);
           } else {
             mat.opacity = 0;
           }
@@ -320,11 +468,8 @@ export class CADRenderer {
       });
     }
 
-    // Highlight entities belonging to the selected component
     if (this.drawing) {
-      const component = this.drawing.components.find(
-        (c) => c.id === componentId
-      );
+      const component = this.drawing.components.find((c) => c.id === componentId);
       const handles = new Set(component?.entityHandles || []);
 
       for (const [handle, obj] of this.entityMap) {
@@ -332,9 +477,8 @@ export class CADRenderer {
           if (child instanceof THREE.Line) {
             const mat = child.material as THREE.LineBasicMaterial;
             if (componentId && handles.has(handle)) {
-              mat.color.set(color || this.options.highlightColor!);
+              mat.color.set(highlightColor);
             } else {
-              // Reset to original color
               const entityColor = dxfColorToHex(
                 this.drawing?.entities.find((e) => e.handle === handle)?.color
               );
@@ -347,9 +491,6 @@ export class CADRenderer {
     this.render();
   }
 
-  /**
-   * Raycast to find which component was clicked
-   */
   getComponentAtPoint(screenX: number, screenY: number): string | null {
     if (!this.containerEl || !this.drawing) return null;
 
@@ -358,15 +499,11 @@ export class CADRenderer {
     this.mouse.y = -((screenY - rect.top) / rect.height) * 2 + 1;
 
     this.raycaster.setFromCamera(this.mouse, this.camera);
-    const intersects = this.raycaster.intersectObjects(
-      this.scene.children,
-      true
-    );
+    const intersects = this.raycaster.intersectObjects(this.scene.children, true);
 
     for (const intersect of intersects) {
       const handle = intersect.object.userData?.handle;
       if (handle) {
-        // Find which component this entity belongs to
         for (const component of this.drawing.components) {
           if (component.entityHandles.includes(handle)) {
             return component.id;
@@ -378,23 +515,16 @@ export class CADRenderer {
     return null;
   }
 
-  /**
-   * Get world coordinates from screen coordinates
-   */
   screenToWorld(screenX: number, screenY: number): Point2D {
     if (!this.containerEl) return { x: 0, y: 0 };
     const rect = this.containerEl.getBoundingClientRect();
     const ndcX = ((screenX - rect.left) / rect.width) * 2 - 1;
     const ndcY = -((screenY - rect.top) / rect.height) * 2 + 1;
 
-    const worldX =
-      ((ndcX + 1) / 2) * (this.camera.right - this.camera.left) +
-      this.camera.left;
-    const worldY =
-      ((ndcY + 1) / 2) * (this.camera.top - this.camera.bottom) +
-      this.camera.bottom;
-
-    return { x: worldX, y: worldY };
+    return {
+      x: ((ndcX + 1) / 2) * (this.camera.right - this.camera.left) + this.camera.left,
+      y: ((ndcY + 1) / 2) * (this.camera.top - this.camera.bottom) + this.camera.bottom,
+    };
   }
 
   render(): void {
@@ -419,22 +549,41 @@ export class CADRenderer {
     event.preventDefault();
     const zoomFactor = event.deltaY > 0 ? 1.1 : 0.9;
 
-    const centerX = (this.camera.left + this.camera.right) / 2;
-    const centerY = (this.camera.top + this.camera.bottom) / 2;
-    const halfWidth = (this.camera.right - this.camera.left) / 2;
-    const halfHeight = (this.camera.top - this.camera.bottom) / 2;
+    // Zoom toward cursor position
+    if (this.containerEl) {
+      const rect = this.containerEl.getBoundingClientRect();
+      const mouseX = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+      const mouseY = -((event.clientY - rect.top) / rect.height) * 2 + 1;
 
-    this.camera.left = centerX - halfWidth * zoomFactor;
-    this.camera.right = centerX + halfWidth * zoomFactor;
-    this.camera.top = centerY + halfHeight * zoomFactor;
-    this.camera.bottom = centerY - halfHeight * zoomFactor;
+      const worldX = ((mouseX + 1) / 2) * (this.camera.right - this.camera.left) + this.camera.left;
+      const worldY = ((mouseY + 1) / 2) * (this.camera.top - this.camera.bottom) + this.camera.bottom;
+
+      const newLeft = worldX + (this.camera.left - worldX) * zoomFactor;
+      const newRight = worldX + (this.camera.right - worldX) * zoomFactor;
+      const newTop = worldY + (this.camera.top - worldY) * zoomFactor;
+      const newBottom = worldY + (this.camera.bottom - worldY) * zoomFactor;
+
+      this.camera.left = newLeft;
+      this.camera.right = newRight;
+      this.camera.top = newTop;
+      this.camera.bottom = newBottom;
+    } else {
+      const centerX = (this.camera.left + this.camera.right) / 2;
+      const centerY = (this.camera.top + this.camera.bottom) / 2;
+      const halfWidth = (this.camera.right - this.camera.left) / 2;
+      const halfHeight = (this.camera.top - this.camera.bottom) / 2;
+      this.camera.left = centerX - halfWidth * zoomFactor;
+      this.camera.right = centerX + halfWidth * zoomFactor;
+      this.camera.top = centerY + halfHeight * zoomFactor;
+      this.camera.bottom = centerY - halfHeight * zoomFactor;
+    }
+
     this.camera.updateProjectionMatrix();
     this.render();
   };
 
   private onMouseDown = (event: MouseEvent): void => {
     if (event.button === 1 || (event.button === 0 && event.shiftKey)) {
-      // Middle click or Shift+Left = pan
       this.isPanning = true;
       this.panStart = { x: event.clientX, y: event.clientY };
       this.cameraStart = {

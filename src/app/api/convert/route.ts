@@ -1,24 +1,30 @@
 import { NextRequest, NextResponse } from "next/server";
-import { writeFile, readFile, unlink, mkdir } from "fs/promises";
+import { writeFile, readFile, unlink, mkdir, access, constants } from "fs/promises";
 import { join } from "path";
-import { tmpdir } from "os";
+import { tmpdir, homedir } from "os";
 import { randomUUID } from "crypto";
 import { exec } from "child_process";
 import { promisify } from "util";
 
 const execAsync = promisify(exec);
 
-// ODA File Converter paths (install from https://www.opendesign.com/guestfiles/oda_file_converter)
+// Paths to look for dwg2dxf (libredwg) and ODA File Converter
+const DWG2DXF_PATHS = [
+  join(homedir(), "bin", "dwg2dxf"),
+  "/usr/local/bin/dwg2dxf",
+  "/usr/bin/dwg2dxf",
+];
+
 const ODA_PATHS = [
   "/Applications/ODAFileConverter.app/Contents/MacOS/ODAFileConverter",
   "/usr/bin/ODAFileConverter",
   "C:\\Program Files\\ODA\\ODAFileConverter\\ODAFileConverter.exe",
 ];
 
-async function findODA(): Promise<string | null> {
-  for (const p of ODA_PATHS) {
+async function findExecutable(paths: string[]): Promise<string | null> {
+  for (const p of paths) {
     try {
-      await execAsync(`"${p}" --help 2>&1 || true`);
+      await access(p, constants.X_OK);
       return p;
     } catch {
       // Try next path
@@ -44,45 +50,72 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Create temp directories for input and output
+    // Create temp directory
     const sessionId = randomUUID();
-    const inputDir = join(tmpdir(), `el-convert-in-${sessionId}`);
-    const outputDir = join(tmpdir(), `el-convert-out-${sessionId}`);
-    await mkdir(inputDir, { recursive: true });
-    await mkdir(outputDir, { recursive: true });
+    const workDir = join(tmpdir(), `el-convert-${sessionId}`);
+    await mkdir(workDir, { recursive: true });
 
-    const inputPath = join(inputDir, file.name);
+    const inputPath = join(workDir, file.name);
     const outputFileName = file.name.replace(/\.dwg$/i, ".dxf");
-    const outputPath = join(outputDir, outputFileName);
+    const outputPath = join(workDir, outputFileName);
 
     // Write uploaded file to temp
     const bytes = await file.arrayBuffer();
     await writeFile(inputPath, Buffer.from(bytes));
 
-    // Find ODA File Converter
-    const odaPath = await findODA();
-    if (!odaPath) {
-      // Clean up temp files
-      await unlink(inputPath).catch(() => {});
-      return new NextResponse(
-        "DWG conversion requires ODA File Converter. Please install it from https://www.opendesign.com/guestfiles/oda_file_converter or upload a DXF file instead.",
-        { status: 501 }
-      );
+    let converted = false;
+
+    // Try dwg2dxf (libredwg) first — faster, no GUI dependency
+    // Note: dwg2dxf may exit with non-zero code due to warnings but still produce valid output
+    const dwg2dxfPath = await findExecutable(DWG2DXF_PATHS);
+    if (dwg2dxfPath) {
+      try {
+        await execAsync(
+          `"${dwg2dxfPath}" -y -o "${outputPath}" "${inputPath}"`,
+          { timeout: 60000 }
+        );
+        converted = true;
+      } catch {
+        // dwg2dxf may exit non-zero due to warnings — check if output was still produced
+        try {
+          const stat = await access(outputPath, constants.R_OK);
+          converted = true;
+        } catch {
+          console.error("dwg2dxf failed to produce output");
+        }
+      }
     }
 
-    // Run ODA File Converter
-    // Usage: ODAFileConverter <input_dir> <output_dir> <output_version> <output_type> <recurse> <audit>
-    // output_type: "DXF" for DXF output
-    // output_version: "ACAD2018" for latest compatible version
-    const cmd = `"${odaPath}" "${inputDir}" "${outputDir}" "ACAD2018" "DXF" "0" "1"`;
+    // Fall back to ODA File Converter
+    if (!converted) {
+      const odaPath = await findExecutable(ODA_PATHS);
+      if (odaPath) {
+        const inputDir = workDir;
+        const outputDir = join(workDir, "out");
+        await mkdir(outputDir, { recursive: true });
 
-    try {
-      await execAsync(cmd, { timeout: 30000 });
-    } catch (err) {
+        try {
+          await execAsync(
+            `"${odaPath}" "${inputDir}" "${outputDir}" "ACAD2018" "DXF" "0" "1"`,
+            { timeout: 60000 }
+          );
+          // ODA outputs to outputDir
+          const odaOutput = join(outputDir, outputFileName);
+          const content = await readFile(odaOutput, "utf-8");
+          await writeFile(outputPath, content);
+          converted = true;
+        } catch (err) {
+          console.error("ODA conversion failed:", err);
+        }
+      }
+    }
+
+    if (!converted) {
+      // Clean up
       await unlink(inputPath).catch(() => {});
       return new NextResponse(
-        `DWG conversion failed: ${err instanceof Error ? err.message : "Unknown error"}`,
-        { status: 500 }
+        "DWG conversion requires dwg2dxf (libredwg) or ODA File Converter. Please install one of these tools, or upload a DXF file instead.",
+        { status: 501 }
       );
     }
 
