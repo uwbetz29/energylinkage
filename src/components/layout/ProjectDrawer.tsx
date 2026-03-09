@@ -3,30 +3,21 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useProjectStore } from "@/lib/projects/store";
+import { useCADStore } from "@/lib/cad/store";
 import { Input } from "@/components/ui/input";
-import { Button } from "@/components/ui/button";
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogFooter,
-} from "@/components/ui/dialog";
-import {
-  Sheet,
-  SheetContent,
-  SheetHeader,
-  SheetTitle,
-} from "@/components/ui/sheet";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import {
-  Plus,
   FileText,
   Trash2,
+  Upload,
+  File,
+  FileImage,
+  ChevronDown,
+  ChevronRight,
   Pencil,
-  Clock,
-  Home,
+  Check,
+  X,
 } from "lucide-react";
 
 function timeAgo(dateStr: string): string {
@@ -43,256 +34,231 @@ function timeAgo(dateStr: string): string {
   return new Date(dateStr).toLocaleDateString();
 }
 
-interface ProjectDrawerProps {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
+function formatFileSize(bytes: number | null): string {
+  if (!bytes) return "";
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-export function ProjectDrawer({ open, onOpenChange }: ProjectDrawerProps) {
+const isPdfFile = (fileName: string) => fileName.toLowerCase().endsWith(".pdf");
+
+export function ProjectSidebar() {
   const router = useRouter();
   const {
     projects,
     currentProjectId,
-    loadFromStorage,
-    createProject,
-    openProject,
-    deleteProject,
+    loadProjects,
+    getCurrentProject,
+    removeDrawing,
     renameProject,
+    deleteProject,
   } = useProjectStore();
+  const { openFileAsTab } = useCADStore();
 
-  const [showNewDialog, setShowNewDialog] = useState(false);
-  const [newProjectName, setNewProjectName] = useState("");
-  const [renamingId, setRenamingId] = useState<string | null>(null);
+  const [filesExpanded, setFilesExpanded] = useState(true);
+  const [projectsExpanded, setProjectsExpanded] = useState(false);
+  const [isRenamingProject, setIsRenamingProject] = useState(false);
   const [renameValue, setRenameValue] = useState("");
 
   useEffect(() => {
-    if (open) loadFromStorage();
-  }, [open, loadFromStorage]);
+    loadProjects();
+  }, [loadProjects]);
 
-  const sortedProjects = [...projects].sort(
-    (a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
-  );
+  const currentProject = getCurrentProject();
 
-  const handleSwitchProject = (id: string) => {
-    if (id === currentProjectId) {
-      onOpenChange(false);
-      return;
-    }
-    openProject(id);
-    onOpenChange(false);
-    // Reload the viewer with the new project
-    window.location.reload();
+  const handleOpenFile = (drawingId: string) => {
+    if (!currentProject) return;
+    const drawing = currentProject.drawings.find((d) => d.id === drawingId);
+    if (!drawing?.dxfContent) return;
+
+    // Open as a working copy tab
+    openFileAsTab(drawing.id, drawing.fileName, drawing.dxfContent);
   };
 
-  const handleCreateProject = () => {
-    if (!newProjectName.trim()) return;
-    const project = createProject(newProjectName.trim());
-    setShowNewDialog(false);
-    setNewProjectName("");
-    openProject(project.id);
-    onOpenChange(false);
-    window.location.reload();
-  };
-
-  const handleDeleteProject = (e: React.MouseEvent, id: string, name: string) => {
+  const handleDeleteDrawing = async (e: React.MouseEvent, drawingId: string, name: string) => {
     e.stopPropagation();
-    if (confirm(`Delete "${name}"? This cannot be undone.`)) {
-      deleteProject(id);
-      if (id === currentProjectId) {
-        router.push("/");
+    if (!currentProjectId) return;
+    if (confirm(`Delete "${name}"?\n\nThis will permanently remove this source file. This cannot be undone.`)) {
+      try {
+        await removeDrawing(currentProjectId, drawingId);
+      } catch (err) {
+        console.error("Delete drawing failed:", err);
+        alert("Failed to delete file. Please try again.");
       }
     }
   };
 
-  const handleStartRename = (e: React.MouseEvent, id: string, currentName: string) => {
-    e.stopPropagation();
-    setRenamingId(id);
-    setRenameValue(currentName);
+  const handleStartRename = () => {
+    if (!currentProject) return;
+    setRenameValue(currentProject.name);
+    setIsRenamingProject(true);
   };
 
   const handleFinishRename = () => {
-    if (renamingId && renameValue.trim()) {
-      renameProject(renamingId, renameValue.trim());
+    if (currentProjectId && renameValue.trim()) {
+      renameProject(currentProjectId, renameValue.trim());
     }
-    setRenamingId(null);
-    setRenameValue("");
+    setIsRenamingProject(false);
+  };
+
+  const handleDeleteProject = () => {
+    if (!currentProject || !currentProjectId) return;
+    if (
+      confirm(
+        `Delete project "${currentProject.name}"?\n\nAll files in this project will be permanently deleted. This cannot be undone.`
+      )
+    ) {
+      deleteProject(currentProjectId);
+      router.push("/");
+    }
   };
 
   return (
-    <>
-      <Sheet open={open} onOpenChange={onOpenChange}>
-        <SheetContent side="left" className="w-80 p-0 flex flex-col">
-          <SheetHeader className="p-4 pb-0">
-            <div className="flex items-center gap-2">
-              <img src="/logo.png" alt="EnergyLink FLEX" className="h-6 w-auto" />
-            </div>
-          </SheetHeader>
-
-          <div className="px-4 pt-3 pb-2">
-            <Button
-              variant="outline"
-              size="sm"
-              className="w-full justify-start gap-2 text-[#555]"
-              onClick={() => {
-                onOpenChange(false);
-                router.push("/");
+    <div className="w-56 border-r border-[#E7E7E7] bg-[#F7F9FA] flex flex-col h-full">
+      {/* Project name header with rename/delete */}
+      <div className="px-3 py-3 border-b border-[#E7E7E7]">
+        {isRenamingProject ? (
+          <div className="flex items-center gap-1">
+            <Input
+              value={renameValue}
+              onChange={(e) => setRenameValue(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") handleFinishRename();
+                if (e.key === "Escape") setIsRenamingProject(false);
               }}
-            >
-              <Home className="w-3.5 h-3.5" />
-              Back to Start
-            </Button>
-          </div>
-
-          <Separator />
-
-          <div className="px-4 pt-3 pb-2 flex items-center justify-between">
-            <span className="text-xs font-medium text-[#555]">
-              Projects ({projects.length})
-            </span>
+              className="h-7 text-sm font-semibold"
+              autoFocus
+            />
             <button
-              className="p-1 rounded hover:bg-[#F0F0F0] text-[#93C90F]"
-              onClick={() => setShowNewDialog(true)}
-              title="New Project"
+              onClick={handleFinishRename}
+              className="p-1 rounded hover:bg-[#EDEDF0] text-[#93C90F]"
             >
-              <Plus className="w-4 h-4" />
+              <Check className="w-3.5 h-3.5" />
+            </button>
+            <button
+              onClick={() => setIsRenamingProject(false)}
+              className="p-1 rounded hover:bg-[#EDEDF0] text-[#999]"
+            >
+              <X className="w-3.5 h-3.5" />
             </button>
           </div>
+        ) : (
+          <div className="flex items-center gap-1 group">
+            <div className="text-sm font-semibold text-[#222] truncate flex-1">
+              {currentProject?.name || "No Project"}
+            </div>
+            <button
+              onClick={handleStartRename}
+              className="p-1 rounded hover:bg-[#EDEDF0] text-[#999] hover:text-[#555] opacity-0 group-hover:opacity-100 transition-opacity"
+              title="Rename project"
+            >
+              <Pencil className="w-3 h-3" />
+            </button>
+            <button
+              onClick={handleDeleteProject}
+              className="p-1 rounded hover:bg-red-50 text-[#999] hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity"
+              title="Delete project"
+            >
+              <Trash2 className="w-3 h-3" />
+            </button>
+          </div>
+        )}
+      </div>
 
-          <ScrollArea className="flex-1">
-            <div className="px-2 pb-4 space-y-0.5">
-              {sortedProjects.map((project) => {
+      {/* Files section */}
+      <div>
+        <button
+          className="w-full flex items-center gap-1.5 px-3 py-2.5 text-xs font-semibold text-[#555] uppercase tracking-wider hover:bg-[#EDEDF0] transition-colors"
+          onClick={() => setFilesExpanded(!filesExpanded)}
+        >
+          {filesExpanded ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
+          Source Files ({currentProject?.drawings.length || 0})
+        </button>
+
+        {filesExpanded && (
+          <div className="px-1.5 pb-2">
+            {currentProject?.drawings.map((drawing) => (
+              <div
+                key={drawing.id}
+                className="flex items-center gap-2 px-2 py-2 rounded hover:bg-[#EDEDF0] cursor-pointer group transition-colors"
+                onClick={() => handleOpenFile(drawing.id)}
+                title={`Open "${drawing.fileName}" as a working copy`}
+              >
+                {isPdfFile(drawing.fileName) ? (
+                  <FileImage className="w-3.5 h-3.5 text-red-400 flex-shrink-0" />
+                ) : (
+                  <File className="w-3.5 h-3.5 text-[#999] flex-shrink-0" />
+                )}
+                <div className="min-w-0 flex-1">
+                  <div className="text-xs text-[#333] truncate">{drawing.fileName}</div>
+                  <div className="text-[10px] text-[#999]">
+                    {formatFileSize(drawing.fileSizeBytes)} · {timeAgo(drawing.createdAt)}
+                  </div>
+                </div>
+                <button
+                  className="p-0.5 rounded hover:bg-white text-[#999] hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity"
+                  onClick={(e) => handleDeleteDrawing(e, drawing.id, drawing.fileName)}
+                  title="Delete source file"
+                >
+                  <Trash2 className="w-3 h-3" />
+                </button>
+              </div>
+            ))}
+
+            {(!currentProject || currentProject.drawings.length === 0) && (
+              <div className="px-2 py-4 text-center text-xs text-[#999]">
+                <Upload className="w-5 h-5 mx-auto mb-1.5 text-[#bbb]" />
+                No files yet.
+                <br />
+                Upload a DXF, DWG, or PDF.
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
+      <Separator />
+
+      {/* Other projects section */}
+      <div>
+        <button
+          className="w-full flex items-center gap-1.5 px-3 py-2.5 text-xs font-semibold text-[#555] uppercase tracking-wider hover:bg-[#EDEDF0] transition-colors"
+          onClick={() => setProjectsExpanded(!projectsExpanded)}
+        >
+          {projectsExpanded ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
+          Projects ({projects.length})
+        </button>
+
+        {projectsExpanded && (
+          <ScrollArea className="max-h-48">
+            <div className="px-1.5 pb-2">
+              {projects.map((project) => {
                 const isActive = project.id === currentProjectId;
                 return (
-                  <div
+                  <button
                     key={project.id}
-                    className={`flex items-center gap-2 px-2 py-2 rounded-md cursor-pointer group transition-colors ${
+                    className={`w-full flex items-center gap-2 px-2 py-2 rounded text-xs transition-colors ${
                       isActive
-                        ? "bg-[#93C90F]/10 border border-[#93C90F]/20"
-                        : "hover:bg-[#F0F0F0] border border-transparent"
+                        ? "bg-[#93C90F]/10 text-[#222] font-medium"
+                        : "text-[#555] hover:bg-[#EDEDF0]"
                     }`}
-                    onClick={() => handleSwitchProject(project.id)}
+                    onClick={() => {
+                      if (!isActive) {
+                        useProjectStore.getState().openProject(project.id);
+                        window.location.reload();
+                      }
+                    }}
                   >
-                    <FileText
-                      className={`w-4 h-4 flex-shrink-0 ${
-                        isActive ? "text-[#93C90F]" : "text-[#999]"
-                      }`}
-                    />
-                    <div className="min-w-0 flex-1">
-                      {renamingId === project.id ? (
-                        <Input
-                          value={renameValue}
-                          onChange={(e) => setRenameValue(e.target.value)}
-                          onBlur={handleFinishRename}
-                          onKeyDown={(e) => {
-                            if (e.key === "Enter") handleFinishRename();
-                            if (e.key === "Escape") {
-                              setRenamingId(null);
-                              setRenameValue("");
-                            }
-                          }}
-                          className="h-6 text-xs"
-                          autoFocus
-                          onClick={(e) => e.stopPropagation()}
-                        />
-                      ) : (
-                        <span
-                          className={`text-xs font-medium truncate block ${
-                            isActive ? "text-[#222]" : "text-[#333]"
-                          }`}
-                        >
-                          {project.name}
-                        </span>
-                      )}
-                      <span className="text-[10px] text-[#999] flex items-center gap-1 mt-0.5">
-                        <Clock className="w-2.5 h-2.5" />
-                        {timeAgo(project.updatedAt)}
-                      </span>
-                    </div>
-                    {/* Hover actions */}
-                    <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
-                      <button
-                        className="p-1 rounded hover:bg-white text-[#999] hover:text-[#555]"
-                        onClick={(e) => handleStartRename(e, project.id, project.name)}
-                        title="Rename"
-                      >
-                        <Pencil className="w-3 h-3" />
-                      </button>
-                      <button
-                        className="p-1 rounded hover:bg-white text-[#999] hover:text-red-500"
-                        onClick={(e) => handleDeleteProject(e, project.id, project.name)}
-                        title="Delete"
-                      >
-                        <Trash2 className="w-3 h-3" />
-                      </button>
-                    </div>
-                  </div>
+                    <FileText className={`w-3.5 h-3.5 flex-shrink-0 ${isActive ? "text-[#93C90F]" : "text-[#999]"}`} />
+                    <span className="truncate">{project.name}</span>
+                  </button>
                 );
               })}
-
-              {projects.length === 0 && (
-                <div className="text-center py-8 text-xs text-[#999]">
-                  <p>No projects yet</p>
-                  <button
-                    className="text-[#93C90F] mt-1 hover:underline"
-                    onClick={() => setShowNewDialog(true)}
-                  >
-                    Create one
-                  </button>
-                </div>
-              )}
             </div>
           </ScrollArea>
-
-          <Separator />
-          <div className="p-3">
-            <Button
-              size="sm"
-              className="w-full bg-[#93C90F] hover:bg-[#86BB46] text-white gap-2"
-              onClick={() => setShowNewDialog(true)}
-            >
-              <Plus className="w-3.5 h-3.5" />
-              New Project
-            </Button>
-          </div>
-        </SheetContent>
-      </Sheet>
-
-      {/* New Project Dialog */}
-      <Dialog open={showNewDialog} onOpenChange={setShowNewDialog}>
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle>New Project</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-4 py-2">
-            <div>
-              <label className="text-sm font-medium text-[#555] mb-1 block">
-                Project Name
-              </label>
-              <Input
-                value={newProjectName}
-                onChange={(e) => setNewProjectName(e.target.value)}
-                placeholder="e.g., Independence Station SCR System"
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") handleCreateProject();
-                }}
-                autoFocus
-              />
-            </div>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setShowNewDialog(false)}>
-              Cancel
-            </Button>
-            <Button
-              onClick={handleCreateProject}
-              disabled={!newProjectName.trim()}
-              className="bg-[#93C90F] hover:bg-[#86BB46] text-white"
-            >
-              Create Project
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-    </>
+        )}
+      </div>
+    </div>
   );
 }

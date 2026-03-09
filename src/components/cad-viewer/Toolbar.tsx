@@ -2,28 +2,28 @@
 
 import { useRef, useCallback } from "react";
 import { useCADStore } from "@/lib/cad/store";
-import { Separator } from "@/components/ui/separator";
+import { processCADFile } from "@/lib/cad/file-processing";
 import {
+  Menu,
   Upload,
-  Download,
   ZoomIn,
   ZoomOut,
   Maximize,
   RotateCcw,
-  Layers,
-  MousePointer,
-  Menu,
+  RotateCw,
+  Sparkles,
 } from "lucide-react";
 import Image from "next/image";
+import Link from "next/link";
+import { useProjectStore } from "@/lib/projects/store";
 
 interface ToolbarProps {
-  onToggleLayers?: () => void;
-  showLayers?: boolean;
-  onMenuClick?: () => void;
+  onToggleSidebar?: () => void;
+  showSidebar?: boolean;
   projectName?: string;
 }
 
-function ToolbarButton({
+function ToolButton({
   onClick,
   disabled,
   title,
@@ -41,8 +41,8 @@ function ToolbarButton({
       onClick={onClick}
       disabled={disabled}
       title={title}
-      className={`h-8 w-8 inline-flex items-center justify-center rounded-md text-sm font-medium transition-colors
-        ${active ? "bg-[#93C90F]/10 text-[#93C90F]" : "text-[#555] hover:bg-[#F6F6F6] hover:text-[#222]"}
+      className={`h-7 w-7 inline-flex items-center justify-center rounded-md text-xs transition-colors
+        ${active ? "bg-[#93C90F]/25 text-[#5A7D00]" : "text-[#666] hover:bg-[#E0E0E0] hover:text-[#0C121D]"}
         ${disabled ? "opacity-30 pointer-events-none" : ""}
       `}
     >
@@ -51,159 +51,160 @@ function ToolbarButton({
   );
 }
 
-export function Toolbar({ onToggleLayers, showLayers, onMenuClick, projectName }: ToolbarProps) {
+function ToolGroup({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="flex items-center gap-0.5 px-1.5 py-1 bg-[#EBEBEB] rounded-lg border border-[#D4D4D4]/60">
+      {children}
+    </div>
+  );
+}
+
+export function Toolbar({ onToggleSidebar, showSidebar, projectName }: ToolbarProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const { drawing, isLoading, error, loadDXFFile, undo, scaleHistory } =
+  const { drawing, isLoading, error, undo, redo, scaleHistory, redoStack, isRecognizing, componentGraph, recognizeComponents } =
     useCADStore();
+  const { currentProjectId, addDrawing } = useProjectStore();
 
   const handleFileUpload = useCallback(
     async (event: React.ChangeEvent<HTMLInputElement>) => {
       const file = event.target.files?.[0];
-      if (!file) return;
-
-      const ext = file.name.split(".").pop()?.toLowerCase();
-
-      if (ext === "dwg") {
-        // DWG files need server-side conversion to DXF
-        const formData = new FormData();
-        formData.append("file", file);
-        try {
-          useCADStore.setState({ isLoading: true, error: null });
-          const res = await fetch("/api/convert", {
-            method: "POST",
-            body: formData,
-          });
-          if (!res.ok) {
-            const errText = await res.text();
-            throw new Error(errText || "DWG conversion failed");
-          }
-          const dxfContent = await res.text();
-          loadDXFFile(dxfContent, file.name);
-        } catch (err) {
-          useCADStore.setState({
-            isLoading: false,
-            error: err instanceof Error ? err.message : "Failed to convert DWG file",
-          });
-        }
-      } else {
-        // DXF files can be read directly as text
-        const reader = new FileReader();
-        reader.onload = (e) => {
-          const content = e.target?.result as string;
-          loadDXFFile(content, file.name);
-        };
-        reader.readAsText(file);
+      if (!file || !currentProjectId) return;
+      try {
+        const result = await processCADFile(file);
+        await addDrawing(currentProjectId, {
+          name: result.fileName.replace(/\.(dxf|dwg|pdf)$/i, ""),
+          fileName: result.fileName,
+          dxfContent: result.dxfContent,
+          fileSizeBytes: result.fileSize,
+        });
+      } catch (err) {
+        console.error("Upload failed:", err);
       }
-
       event.target.value = "";
     },
-    [loadDXFFile]
+    [currentProjectId, addDrawing]
   );
 
-  const handleExportDXF = useCallback(() => {
-    alert("DXF export coming soon!");
-  }, []);
-
   return (
-    <div className="flex items-center gap-1 px-3 py-2 bg-white border-b border-[#E7E7E7]">
-      {/* Menu + Logo */}
-      <ToolbarButton title="Projects" onClick={onMenuClick}>
-        <Menu className="w-4 h-4" />
-      </ToolbarButton>
-      <div className="flex items-center gap-2 mr-3">
-        <Image src="/logo.png" alt="EnergyLink FLEX" width={562} height={149} className="h-7 w-auto" />
+    <header className="flex items-center h-14 px-4 bg-white border-b border-[#D4D4D4]">
+      {/* Left: Hamburger + Logo + Project name */}
+      <div className="flex items-center gap-3 min-w-0">
+        <button
+          onClick={onToggleSidebar}
+          title={showSidebar ? "Hide sidebar" : "Show sidebar"}
+          className="h-8 w-8 inline-flex items-center justify-center rounded-md text-[#666] hover:bg-[#E0E0E0] hover:text-[#0C121D] transition-colors flex-shrink-0"
+        >
+          <Menu className="w-4 h-4" />
+        </button>
+        <Link href="/" className="flex-shrink-0">
+          <Image
+            src="/logo.png"
+            alt="EnergyLink FLEX"
+            width={706}
+            height={149}
+            className="h-9 w-auto"
+            unoptimized
+          />
+        </Link>
+
         {projectName && (
-          <span className="text-[10px] text-[#999] leading-none truncate max-w-[150px]">
-            {projectName}
-          </span>
-        )}
-      </div>
-
-      <Separator orientation="vertical" className="h-6 mx-1" />
-
-      <input
-        ref={fileInputRef}
-        type="file"
-        accept=".dxf,.dwg"
-        className="hidden"
-        onChange={handleFileUpload}
-      />
-
-      <ToolbarButton
-        title="Upload DXF/DWG File"
-        onClick={() => fileInputRef.current?.click()}
-        disabled={isLoading}
-      >
-        <Upload className="w-4 h-4" />
-      </ToolbarButton>
-
-      <ToolbarButton
-        title="Export DXF"
-        onClick={handleExportDXF}
-        disabled={!drawing}
-      >
-        <Download className="w-4 h-4" />
-      </ToolbarButton>
-
-      <Separator orientation="vertical" className="h-6 mx-1" />
-
-      <ToolbarButton title="Zoom In" disabled={!drawing}>
-        <ZoomIn className="w-4 h-4" />
-      </ToolbarButton>
-
-      <ToolbarButton title="Zoom Out" disabled={!drawing}>
-        <ZoomOut className="w-4 h-4" />
-      </ToolbarButton>
-
-      <ToolbarButton title="Fit to View" disabled={!drawing}>
-        <Maximize className="w-4 h-4" />
-      </ToolbarButton>
-
-      <Separator orientation="vertical" className="h-6 mx-1" />
-
-      <ToolbarButton title="Select Component" disabled={!drawing}>
-        <MousePointer className="w-4 h-4" />
-      </ToolbarButton>
-
-      <ToolbarButton
-        title="Toggle Layers Panel"
-        onClick={onToggleLayers}
-        disabled={!drawing}
-        active={showLayers}
-      >
-        <Layers className="w-4 h-4" />
-      </ToolbarButton>
-
-      <Separator orientation="vertical" className="h-6 mx-1" />
-
-      <ToolbarButton
-        title="Undo Last Scale"
-        onClick={undo}
-        disabled={scaleHistory.length === 0}
-      >
-        <RotateCcw className="w-4 h-4" />
-      </ToolbarButton>
-
-      {/* Status */}
-      <div className="ml-auto flex items-center gap-2 text-xs text-[#888]">
-        {isLoading && <span className="text-[#00BFDD]">Loading...</span>}
-        {error && (
-          <span className="text-red-500 max-w-xs truncate" title={error}>
-            {error}
-          </span>
-        )}
-        {drawing && (
           <>
-            <span className="text-[#333] font-medium">{drawing.fileName}</span>
-            <span className="text-[#ddd]">|</span>
-            <span>{drawing.entities.length} entities</span>
-            <span className="text-[#ddd]">|</span>
-            <span>{drawing.components.length} components</span>
-            <span className="text-[#ddd]">|</span>
-            <span>{drawing.layers.length} layers</span>
+            <div className="w-px h-5 bg-[#D4D4D4]" />
+            <span className="text-sm font-medium text-[#0C121D] truncate max-w-[200px]">
+              {projectName}
+            </span>
           </>
         )}
       </div>
-    </div>
+
+      {/* Center: Tool groups */}
+      <div className="flex-1 flex items-center justify-center gap-2">
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept=".dxf,.dwg,.pdf"
+          className="hidden"
+          onChange={handleFileUpload}
+        />
+
+        {/* View tools */}
+        <ToolGroup>
+          <ToolButton title="Zoom In" disabled={!drawing}>
+            <ZoomIn className="w-3.5 h-3.5" />
+          </ToolButton>
+          <ToolButton title="Zoom Out" disabled={!drawing}>
+            <ZoomOut className="w-3.5 h-3.5" />
+          </ToolButton>
+          <ToolButton title="Fit to View" disabled={!drawing}>
+            <Maximize className="w-3.5 h-3.5" />
+          </ToolButton>
+        </ToolGroup>
+
+        {/* Edit tools */}
+        <ToolGroup>
+          <ToolButton
+            title="Undo"
+            onClick={undo}
+            disabled={scaleHistory.length === 0}
+          >
+            <RotateCcw className="w-3.5 h-3.5" />
+          </ToolButton>
+          <ToolButton
+            title="Redo"
+            onClick={redo}
+            disabled={redoStack.length === 0}
+          >
+            <RotateCw className="w-3.5 h-3.5" />
+          </ToolButton>
+        </ToolGroup>
+
+        {/* Upload (secondary — for adding files to existing projects) */}
+        <ToolButton
+          title="Upload another file"
+          onClick={() => fileInputRef.current?.click()}
+          disabled={isLoading}
+        >
+          <Upload className="w-3.5 h-3.5" />
+        </ToolButton>
+
+        {/* AI Analyze */}
+        <ToolGroup>
+          <ToolButton
+            title={componentGraph ? `Components: ${componentGraph.components.length} detected` : "Analyze Drawing (AI)"}
+            onClick={recognizeComponents}
+            disabled={!drawing || isRecognizing}
+            active={!!componentGraph}
+          >
+            {isRecognizing ? (
+              <svg className="animate-spin w-3.5 h-3.5" viewBox="0 0 24 24" fill="none">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+              </svg>
+            ) : (
+              <Sparkles className="w-3.5 h-3.5" />
+            )}
+          </ToolButton>
+        </ToolGroup>
+      </div>
+
+      {/* Right: Status */}
+      <div className="flex items-center gap-3 min-w-0">
+        {isLoading && (
+          <span className="text-xs text-[#00BFDD] animate-pulse">Loading...</span>
+        )}
+        {error && (
+          <span className="text-xs text-red-500 truncate max-w-[140px]" title={error}>
+            {error}
+          </span>
+        )}
+        {drawing && !isLoading && !error && (
+          <div className="hidden lg:flex items-center gap-1.5 text-[11px] text-[#999]">
+            <span className="text-[#0C121D] font-medium truncate max-w-[120px]">{drawing.fileName}</span>
+            <span className="text-[#D4D4D4]">|</span>
+            <span>{drawing.entities.length} entities</span>
+          </div>
+        )}
+      </div>
+    </header>
   );
 }

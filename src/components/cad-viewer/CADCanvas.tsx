@@ -1,19 +1,25 @@
 "use client";
 
-import { useEffect, useRef, useCallback } from "react";
+import { useEffect, useRef, useCallback, useState } from "react";
 import { CADRenderer } from "@/lib/cad/renderer";
 import { useCADStore } from "@/lib/cad/store";
+import { DimensionOverlay } from "./DimensionOverlay";
 
 export function CADCanvas() {
   const containerRef = useRef<HTMLDivElement>(null);
   const rendererRef = useRef<CADRenderer | null>(null);
   const minimapRef = useRef<HTMLCanvasElement>(null);
+  const [rendererReady, setRendererReady] = useState<CADRenderer | null>(null);
+  /** Track which file+page is loaded to distinguish new content vs in-place update */
+  const loadedKeyRef = useRef<string | null>(null);
   const {
     drawing,
     selectedComponentId,
     hoveredComponentId,
     selectComponent,
     hoverComponent,
+    pdfCurrentPage,
+    lastModification,
   } = useCADStore();
 
   // Initialize renderer
@@ -23,6 +29,7 @@ export function CADCanvas() {
     const renderer = new CADRenderer();
     renderer.mount(containerRef.current);
     rendererRef.current = renderer;
+    setRendererReady(renderer);
 
     // Set up minimap updates on view change
     renderer.onViewChange(() => {
@@ -34,18 +41,42 @@ export function CADCanvas() {
     return () => {
       renderer.unmount();
       rendererRef.current = null;
+      setRendererReady(null);
     };
   }, []);
 
-  // Load drawing when it changes
+  // Load or update drawing when it changes
   useEffect(() => {
     if (!rendererRef.current || !drawing) return;
-    rendererRef.current.loadDrawing(drawing);
-    // Render initial minimap
+
+    // Key includes fileName + page so page switches trigger fitToView
+    const drawingKey = `${drawing.fileName}::p${pdfCurrentPage}`;
+    const isNewContent = drawingKey !== loadedKeyRef.current;
+    loadedKeyRef.current = drawingKey;
+
+    if (isNewContent) {
+      // New file or page change — full load with fitToView
+      rendererRef.current.loadDrawing(drawing);
+    } else {
+      // Same file+page, updated entities (e.g. dimension edit) — preserve camera
+      rendererRef.current.updateDrawing(drawing);
+    }
+
+    // Render minimap
     if (minimapRef.current) {
       rendererRef.current.renderMinimap(minimapRef.current);
     }
-  }, [drawing]);
+  }, [drawing, pdfCurrentPage]);
+
+  // Flash affected entities after dimension change
+  useEffect(() => {
+    if (!rendererRef.current || !lastModification) return;
+    // Delay to let updateDrawing rebuild the scene first (can take 50-100ms for large drawings)
+    const timer = setTimeout(() => {
+      rendererRef.current?.flashEntities(lastModification.affectedEntities);
+    }, 150);
+    return () => clearTimeout(timer);
+  }, [lastModification]);
 
   // Update highlights
   useEffect(() => {
@@ -96,10 +127,13 @@ export function CADCanvas() {
         <div className="absolute inset-0 flex items-center justify-center text-[#888]">
           <div className="text-center">
             <p className="text-lg font-medium text-[#555]">No drawing loaded</p>
-            <p className="text-sm mt-1">Upload a DXF or DWG file to get started</p>
+            <p className="text-sm mt-1">Upload a file or click a source file to start working</p>
           </div>
         </div>
       )}
+
+      {/* Dimension overlay — clickable dimension labels */}
+      {drawing && <DimensionOverlay renderer={rendererReady} />}
 
       {/* Minimap */}
       {drawing && (

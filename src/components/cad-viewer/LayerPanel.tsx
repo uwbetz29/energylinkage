@@ -2,10 +2,10 @@
 
 import { useCADStore } from "@/lib/cad/store";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Eye, EyeOff } from "lucide-react";
+import { Eye, EyeOff, EyeIcon, EyeOffIcon } from "lucide-react";
 
 export function LayerPanel() {
-  const { drawing, layerVisibility, toggleLayerVisibility } = useCADStore();
+  const { drawing, layerVisibility, toggleLayerVisibility, setAllLayerVisibility } = useCADStore();
 
   if (!drawing) return null;
 
@@ -13,12 +13,34 @@ export function LayerPanel() {
     a.name.localeCompare(b.name)
   );
 
+  const visibleCount = sortedLayers.filter(l => layerVisibility[l.name] !== false).length;
+  const allVisible = visibleCount === sortedLayers.length;
+  const allHidden = visibleCount === 0;
+
   return (
     <div className="w-56 border-l border-[#E7E7E7] bg-[#F7F9FA]">
-      <div className="p-3 border-b border-[#E7E7E7]">
+      <div className="p-3 border-b border-[#E7E7E7] flex items-center justify-between">
         <h3 className="text-xs font-medium text-[#555]">
-          Layers ({sortedLayers.length})
+          Layers ({visibleCount}/{sortedLayers.length})
         </h3>
+        <div className="flex items-center gap-1">
+          <button
+            className={`px-1.5 py-0.5 rounded text-[10px] font-medium transition-colors ${allVisible ? "text-[#bbb]" : "text-[#555] hover:bg-[#E7E7E7]"}`}
+            onClick={() => setAllLayerVisibility(true)}
+            disabled={allVisible}
+            title="Show All Layers"
+          >
+            <EyeIcon className="w-3 h-3" />
+          </button>
+          <button
+            className={`px-1.5 py-0.5 rounded text-[10px] font-medium transition-colors ${allHidden ? "text-[#bbb]" : "text-[#555] hover:bg-[#E7E7E7]"}`}
+            onClick={() => setAllLayerVisibility(false)}
+            disabled={allHidden}
+            title="Hide All Layers"
+          >
+            <EyeOffIcon className="w-3 h-3" />
+          </button>
+        </div>
       </div>
       <ScrollArea className="h-full">
         <div className="p-2 space-y-0.5">

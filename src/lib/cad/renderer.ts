@@ -53,13 +53,15 @@ export class CADRenderer {
   private entityMap: Map<string, THREE.Object3D> = new Map();
   private componentGroups: Map<string, THREE.Group> = new Map();
   private drawing: ParsedDrawing | null = null;
+  private previewGroup: THREE.Group | null = null;
+  private dimmedHandles: Set<string> = new Set();
   private containerEl: HTMLElement | null = null;
   private isPanning = false;
   private hasPanned = false;
   private panStart: Point2D = { x: 0, y: 0 };
   private cameraStart: Point2D = { x: 0, y: 0 };
   private minimapCanvas: HTMLCanvasElement | null = null;
-  private onViewChangeCallback: (() => void) | null = null;
+  private viewChangeCallbacks: Array<() => void> = [];
 
   constructor() {
     this.scene = new THREE.Scene();
@@ -84,7 +86,8 @@ export class CADRenderer {
     this.renderer.domElement.addEventListener("wheel", this.onWheel);
     this.renderer.domElement.addEventListener("mousedown", this.onMouseDown);
     this.renderer.domElement.addEventListener("mousemove", this.onMouseMove);
-    this.renderer.domElement.addEventListener("mouseup", this.onMouseUp);
+    window.addEventListener("mouseup", this.onMouseUp);
+    this.renderer.domElement.addEventListener("mouseleave", this.onMouseUp);
     window.addEventListener("resize", this.onResize);
     this.onResize();
   }
@@ -94,7 +97,8 @@ export class CADRenderer {
       this.renderer.domElement.removeEventListener("wheel", this.onWheel);
       this.renderer.domElement.removeEventListener("mousedown", this.onMouseDown);
       this.renderer.domElement.removeEventListener("mousemove", this.onMouseMove);
-      this.renderer.domElement.removeEventListener("mouseup", this.onMouseUp);
+      window.removeEventListener("mouseup", this.onMouseUp);
+      this.renderer.domElement.removeEventListener("mouseleave", this.onMouseUp);
       window.removeEventListener("resize", this.onResize);
       this.containerEl.removeChild(this.renderer.domElement);
       this.containerEl = null;
@@ -106,9 +110,29 @@ export class CADRenderer {
     this.drawing = drawing;
     this.clearScene();
 
+    // Build layer lookup for visibility and BYLAYER color resolution
+    const layerMap = new Map<string, { color: number; visible: boolean; frozen: boolean }>();
+    for (const layer of drawing.layers) {
+      layerMap.set(layer.name, layer);
+    }
+
     // Render all entities
     for (const entity of drawing.entities) {
-      const obj = this.createObject(entity);
+      // Skip entities on frozen layers
+      const layerInfo = layerMap.get(entity.layer);
+      if (layerInfo?.frozen) continue;
+
+      // Resolve color: prefer direct hex (PDF), then DXF index, then layer
+      let resolvedColor: string;
+      if (entity.colorHex) {
+        resolvedColor = entity.colorHex;
+      } else if (entity.color === undefined || entity.color === 256) {
+        resolvedColor = dxfColorToHex(layerInfo?.color);
+      } else {
+        resolvedColor = dxfColorToHex(entity.color);
+      }
+
+      const obj = this.createObject(entity, resolvedColor);
       if (obj) {
         obj.userData = { handle: entity.handle, layer: entity.layer, type: entity.type };
         this.scene.add(obj);
@@ -145,8 +169,85 @@ export class CADRenderer {
     this.render();
   }
 
-  private createObject(entity: ParsedEntity): THREE.Object3D | null {
-    const color = dxfColorToHex(entity.color);
+  /**
+   * Re-render the drawing with updated entities but keep the camera position.
+   * Used after dimension changes so the view doesn't snap back to full extent.
+   */
+  updateDrawing(drawing: ParsedDrawing): void {
+    // Save camera state
+    const cam = this.camera;
+    const savedLeft = cam.left;
+    const savedRight = cam.right;
+    const savedTop = cam.top;
+    const savedBottom = cam.bottom;
+    const savedX = cam.position.x;
+    const savedY = cam.position.y;
+
+    // Full rebuild (clears scene, re-adds entities + components)
+    this.drawing = drawing;
+    this.clearScene();
+
+    const layerMap = new Map<string, { color: number; visible: boolean; frozen: boolean }>();
+    for (const layer of drawing.layers) {
+      layerMap.set(layer.name, layer);
+    }
+
+    for (const entity of drawing.entities) {
+      const layerInfo = layerMap.get(entity.layer);
+      if (layerInfo?.frozen) continue;
+
+      let resolvedColor: string;
+      if (entity.color === undefined || entity.color === 256) {
+        resolvedColor = dxfColorToHex(layerInfo?.color);
+      } else {
+        resolvedColor = dxfColorToHex(entity.color);
+      }
+
+      const obj = this.createObject(entity, resolvedColor);
+      if (obj) {
+        obj.userData = { handle: entity.handle, layer: entity.layer, type: entity.type };
+        this.scene.add(obj);
+        this.entityMap.set(entity.handle, obj);
+      }
+    }
+
+    for (const component of drawing.components) {
+      const group = new THREE.Group();
+      group.userData = { componentId: component.id, componentName: component.name };
+      this.componentGroups.set(component.id, group);
+
+      const bb = component.boundingBox;
+      const geometry = new THREE.BufferGeometry();
+      const vertices = new Float32Array([
+        bb.min.x, bb.min.y, 0,
+        bb.max.x, bb.min.y, 0,
+        bb.max.x, bb.max.y, 0,
+        bb.min.x, bb.max.y, 0,
+        bb.min.x, bb.min.y, 0,
+      ]);
+      geometry.setAttribute("position", new THREE.BufferAttribute(vertices, 3));
+      const line = new THREE.Line(
+        geometry,
+        new THREE.LineBasicMaterial({ color: component.color, transparent: true, opacity: 0 })
+      );
+      line.userData = { componentId: component.id, isOverlay: true };
+      group.add(line);
+      this.scene.add(group);
+    }
+
+    // Restore camera state (no fitToView)
+    cam.left = savedLeft;
+    cam.right = savedRight;
+    cam.top = savedTop;
+    cam.bottom = savedBottom;
+    cam.position.x = savedX;
+    cam.position.y = savedY;
+    cam.updateProjectionMatrix();
+    this.render();
+  }
+
+  private createObject(entity: ParsedEntity, resolvedColor?: string): THREE.Object3D | null {
+    const color = resolvedColor || dxfColorToHex(entity.color);
 
     switch (entity.type) {
       case "LINE":
@@ -170,6 +271,12 @@ export class CADRenderer {
         return this.createSolid(entity, color);
       case "LEADER":
         return this.createLine(entity, color);
+      case "DIMENSION":
+        return this.createDimensionFallback(entity, color);
+      case "POINT":
+        return this.createPoint(entity, color);
+      case "TRACE":
+        return this.createSolid(entity, color);
       default:
         return null;
     }
@@ -424,6 +531,48 @@ export class CADRenderer {
     return new THREE.Line(geometry, new THREE.LineBasicMaterial({ color }));
   }
 
+  private createDimensionFallback(entity: ParsedEntity, color: string): THREE.Object3D | null {
+    // The main dimension visuals come from the expanded block in the parser.
+    // This fallback draws a line between definition point and text position
+    // if the block wasn't found or expanded.
+    const points: Point2D[] = [];
+    if (entity.defPoint1) points.push(entity.defPoint1);
+    if (entity.textPosition) points.push(entity.textPosition);
+    if (points.length < 2) return null;
+
+    const geometry = new THREE.BufferGeometry();
+    const verts = new Float32Array(points.flatMap((v) => [v.x, v.y, 0]));
+    geometry.setAttribute("position", new THREE.BufferAttribute(verts, 3));
+    return new THREE.Line(
+      geometry,
+      new THREE.LineBasicMaterial({ color, transparent: true, opacity: 0.5 })
+    );
+  }
+
+  private createPoint(entity: ParsedEntity, color: string): THREE.Object3D | null {
+    if (!entity.vertices || entity.vertices.length < 1) return null;
+    const p = entity.vertices[0];
+    // Render as a small cross marker
+    const s = 0.5;
+    const geometry = new THREE.BufferGeometry();
+    const verts = new Float32Array([
+      p.x - s, p.y, 0, p.x + s, p.y, 0,
+      p.x, p.y - s, 0, p.x, p.y + s, 0,
+    ]);
+    geometry.setAttribute("position", new THREE.BufferAttribute(verts, 3));
+    return new THREE.LineSegments(geometry, new THREE.LineBasicMaterial({ color }));
+  }
+
+  /** Resolve an entity's display color, handling BYLAYER (256) and direct hex */
+  private resolveEntityColor(entity: ParsedEntity): string {
+    if (entity.colorHex) return entity.colorHex;
+    if (entity.color === undefined || entity.color === 256) {
+      const layer = this.drawing?.layers.find((l) => l.name === entity.layer);
+      return dxfColorToHex(layer?.color);
+    }
+    return dxfColorToHex(entity.color);
+  }
+
   fitToView(): void {
     if (!this.drawing || !this.containerEl) return;
     const { bounds } = this.drawing;
@@ -482,9 +631,8 @@ export class CADRenderer {
             if (componentId && handles.has(handle)) {
               mat.color.set(highlightColor);
             } else {
-              const entityColor = dxfColorToHex(
-                this.drawing?.entities.find((e) => e.handle === handle)?.color
-              );
+              const ent = this.drawing?.entities.find((e) => e.handle === handle);
+              const entityColor = ent ? this.resolveEntityColor(ent) : "#333333";
               mat.color.set(entityColor);
             }
           }
@@ -655,11 +803,15 @@ export class CADRenderer {
   // --- Minimap support ---
 
   onViewChange(callback: () => void): void {
-    this.onViewChangeCallback = callback;
+    this.viewChangeCallbacks.push(callback);
+  }
+
+  removeViewChangeCallback(callback: () => void): void {
+    this.viewChangeCallbacks = this.viewChangeCallbacks.filter((cb) => cb !== callback);
   }
 
   private notifyViewChange(): void {
-    this.onViewChangeCallback?.();
+    for (const cb of this.viewChangeCallbacks) cb();
   }
 
   /** Returns the current viewport rect in world coordinates */
@@ -748,6 +900,150 @@ export class CADRenderer {
     ctx.strokeRect(vpX, vpY, vpW, vpH);
     ctx.fillStyle = "rgba(59, 130, 246, 0.08)";
     ctx.fillRect(vpX, vpY, vpW, vpH);
+  }
+
+  /**
+   * Flash a set of entities with a highlight color, then restore original colors.
+   * Provides visual feedback after a dimension edit.
+   */
+  flashEntities(handles: string[], color = "#FF6600", durationMs = 1500): void {
+    const originals = new Map<string, THREE.Color>();
+
+    for (const handle of handles) {
+      const obj = this.entityMap.get(handle);
+      if (!obj) continue;
+      obj.traverse((child) => {
+        if (child instanceof THREE.Line) {
+          const mat = child.material as THREE.LineBasicMaterial;
+          if (!originals.has(handle)) {
+            originals.set(handle, mat.color.clone());
+          }
+          mat.color.set(color);
+        }
+      });
+    }
+
+    this.render();
+
+    // Restore after delay
+    setTimeout(() => {
+      for (const handle of handles) {
+        const obj = this.entityMap.get(handle);
+        const orig = originals.get(handle);
+        if (!obj || !orig) continue;
+        obj.traverse((child) => {
+          if (child instanceof THREE.Line) {
+            const mat = child.material as THREE.LineBasicMaterial;
+            // Restore to actual entity color (not just saved, since updateDrawing may have rebuilt)
+            const ent = this.drawing?.entities.find((e) => e.handle === handle);
+            if (ent) {
+              mat.color.set(this.resolveEntityColor(ent));
+            } else {
+              mat.color.copy(orig);
+            }
+          }
+        });
+      }
+      this.render();
+    }, durationMs);
+  }
+
+  /**
+   * Show a ghost preview of where entities will move after a dimension change.
+   * Dims originals to 30% opacity and adds green preview copies.
+   */
+  showPreview(previewEntities: ParsedEntity[], affectedHandles: string[]): void {
+    this.clearPreview();
+
+    const group = new THREE.Group();
+    group.userData = { isPreview: true };
+
+    // Dim original entities
+    for (const handle of affectedHandles) {
+      const obj = this.entityMap.get(handle);
+      if (!obj) continue;
+      obj.traverse((child) => {
+        if (child instanceof THREE.Line || child instanceof THREE.LineSegments) {
+          const mat = child.material as THREE.LineBasicMaterial;
+          mat.transparent = true;
+          mat.opacity = 0.25;
+        } else if (child instanceof THREE.Sprite) {
+          const mat = child.material as THREE.SpriteMaterial;
+          mat.opacity = 0.25;
+        }
+      });
+      this.dimmedHandles.add(handle);
+    }
+
+    // Create preview objects
+    const previewColor = "#93C90F";
+    for (const entity of previewEntities) {
+      if (!affectedHandles.includes(entity.handle)) continue;
+      const obj = this.createObject(entity, previewColor);
+      if (obj) {
+        obj.traverse((child) => {
+          if (child instanceof THREE.Line || child instanceof THREE.LineSegments) {
+            const mat = child.material as THREE.LineBasicMaterial;
+            mat.transparent = true;
+            mat.opacity = 0.5;
+          }
+        });
+        group.add(obj);
+      }
+    }
+
+    this.previewGroup = group;
+    this.scene.add(group);
+    this.render();
+  }
+
+  /**
+   * Clear preview overlay and restore original entity opacity.
+   */
+  clearPreview(): void {
+    // Remove preview group
+    if (this.previewGroup) {
+      this.scene.remove(this.previewGroup);
+      this.previewGroup.traverse((child) => {
+        if (child instanceof THREE.Line || child instanceof THREE.LineSegments) {
+          child.geometry?.dispose();
+        }
+      });
+      this.previewGroup = null;
+    }
+
+    // Restore dimmed entities
+    for (const handle of this.dimmedHandles) {
+      const obj = this.entityMap.get(handle);
+      if (!obj) continue;
+      obj.traverse((child) => {
+        if (child instanceof THREE.Line || child instanceof THREE.LineSegments) {
+          const mat = child.material as THREE.LineBasicMaterial;
+          mat.opacity = 1;
+          mat.transparent = false;
+        } else if (child instanceof THREE.Sprite) {
+          const mat = child.material as THREE.SpriteMaterial;
+          mat.opacity = 1;
+        }
+      });
+    }
+    this.dimmedHandles.clear();
+
+    if (this.drawing) this.render();
+  }
+
+  /** Convert world coordinates to screen pixel coordinates */
+  worldToScreen(worldX: number, worldY: number): Point2D | null {
+    if (!this.containerEl) return null;
+    const rect = this.containerEl.getBoundingClientRect();
+    const ndcX =
+      ((worldX - this.camera.left) / (this.camera.right - this.camera.left)) * 2 - 1;
+    const ndcY =
+      ((worldY - this.camera.bottom) / (this.camera.top - this.camera.bottom)) * 2 - 1;
+    return {
+      x: ((ndcX + 1) / 2) * rect.width,
+      y: ((1 - ndcY) / 2) * rect.height,
+    };
   }
 
   /** Convert minimap pixel coords to world coords for click-to-pan */

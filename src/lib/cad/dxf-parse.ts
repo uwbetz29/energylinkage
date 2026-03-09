@@ -2,6 +2,7 @@
 // Key design: block INSERT references are flattened into the entity list with
 // their transforms applied, so the renderer only sees simple geometry primitives.
 import DxfParser from "dxf-parser";
+// @ts-expect-error — dxf-parser exports IDxf but TS can't resolve it alongside the default export
 import type { IDxf, IBlock, IEntity, IPoint } from "dxf-parser";
 import type {
   ParsedDrawing,
@@ -159,6 +160,22 @@ function flattenEntities(
             processEntities(block.entities, arrayTransform, depth + 1);
           }
         }
+      } else if (entity.type === "DIMENSION") {
+        // Expand the dimension's visual block reference (contains lines, arrows, text)
+        const dimE = entity as Record<string, unknown>;
+        const blockName = dimE.block as string | undefined;
+        if (blockName) {
+          const block = blockMap.get(blockName);
+          if (block?.entities) {
+            processEntities(block.entities, transform, depth + 1);
+          }
+        }
+        // Also keep the DIMENSION metadata entity
+        const parsed = convertEntity(entity, transform);
+        if (parsed) result.push(parsed);
+      } else if (entity.type === "HATCH") {
+        // Expand hatch boundaries into renderable geometry (outlines)
+        expandHatchBoundaries(entity, transform, result);
       } else {
         // Convert and transform the entity
         const parsed = convertEntity(entity, transform);
@@ -354,8 +371,32 @@ function convertEntity(
     }
 
     case "HATCH": {
-      // Skip hatches for now — they're fill patterns, complex to render
+      // Handled in processEntities via expandHatchBoundaries
       return null;
+    }
+
+    case "TRACE": {
+      // TRACE is essentially a filled quad, similar to SOLID
+      const pts: Point2D[] = [];
+      for (const key of ["corners", "points"]) {
+        const corners = e[key] as IPoint[] | undefined;
+        if (corners) {
+          for (const c of corners) {
+            pts.push(transformPoint({ x: c.x, y: c.y }, transform));
+          }
+        }
+      }
+      if (pts.length === 0) {
+        for (const key of ["point1", "point2", "point3", "point4"]) {
+          const pt = e[key] as IPoint | undefined;
+          if (pt) pts.push(transformPoint({ x: pt.x, y: pt.y }, transform));
+        }
+      }
+      if (pts.length >= 3) {
+        base.vertices = pts;
+        base.closed = true;
+      }
+      break;
     }
 
     case "DIMENSION": {
@@ -414,6 +455,112 @@ function convertEntity(
   }
 
   return base;
+}
+
+/**
+ * Expand HATCH boundary paths into renderable polyline/arc/line entities.
+ * We don't render the actual hatch pattern, just the boundary outlines.
+ */
+function expandHatchBoundaries(
+  entity: IEntity,
+  transform: Transform,
+  result: ParsedEntity[]
+): void {
+  const e = entity as Record<string, unknown>;
+  const boundaryPaths = e.boundaryPaths as Array<Record<string, unknown>> | undefined;
+  if (!boundaryPaths) return;
+
+  const color = (e as { colorIndex?: number }).colorIndex ?? (e as { color?: number }).color;
+  const layer = entity.layer || "0";
+
+  for (const path of boundaryPaths) {
+    // Polyline-type boundaries (type = 2 or has 'point'/'points' array)
+    const polyPts = (path.point || path.points) as Array<{ x: number; y: number; bulge?: number }> | undefined;
+    if (polyPts && polyPts.length >= 2) {
+      const vertices = polyPts.map((p) => transformPoint({ x: p.x, y: p.y }, transform));
+      const bulges = polyPts.map((p) => p.bulge ?? 0);
+      result.push({
+        handle: generateHandle(),
+        type: "LWPOLYLINE",
+        layer,
+        color,
+        vertices,
+        closed: true,
+        bulges: bulges.some((b) => b !== 0) ? bulges : undefined,
+      });
+      continue;
+    }
+
+    // Edge-based boundaries (type = 1 or has 'edges' array)
+    const edges = path.edges as Array<Record<string, unknown>> | undefined;
+    if (!edges) continue;
+
+    for (const edge of edges) {
+      const edgeType = (edge.type as string)?.toUpperCase?.() ?? "";
+
+      if (edgeType === "LINE") {
+        const verts = edge.vertices as IPoint[] | undefined;
+        if (verts && verts.length >= 2) {
+          result.push({
+            handle: generateHandle(),
+            type: "LINE",
+            layer,
+            color,
+            vertices: verts.map((v) => transformPoint({ x: v.x, y: v.y }, transform)),
+          });
+        }
+      } else if (edgeType === "ARC") {
+        const center = edge.center as IPoint | undefined;
+        const radius = edge.radius as number | undefined;
+        if (center && radius) {
+          let sa = (edge.startAngle as number) ?? 0;
+          let ea = (edge.endAngle as number) ?? 360;
+          sa += transform.rotation;
+          ea += transform.rotation;
+          result.push({
+            handle: generateHandle(),
+            type: "ARC",
+            layer,
+            color,
+            center: transformPoint({ x: center.x, y: center.y }, transform),
+            radius: radius * Math.abs(transform.sx),
+            startAngle: sa,
+            endAngle: ea,
+          });
+        }
+      } else if (edgeType === "ELLIPSE") {
+        const center = edge.center as IPoint | undefined;
+        if (center) {
+          const majorEnd = (edge.majorAxisEndPoint || edge.majorAxisEnd) as IPoint | undefined;
+          result.push({
+            handle: generateHandle(),
+            type: "ELLIPSE",
+            layer,
+            color,
+            center: transformPoint({ x: center.x, y: center.y }, transform),
+            majorAxisEnd: majorEnd
+              ? { x: majorEnd.x * transform.sx, y: majorEnd.y * transform.sy }
+              : { x: 1, y: 0 },
+            axisRatio: (edge.axisRatio as number) ?? 1,
+            startAngle: (edge.startAngle as number) ?? 0,
+            endAngle: (edge.endAngle as number) ?? Math.PI * 2,
+          });
+        }
+      } else if (edgeType === "SPLINE") {
+        const controlPts = (edge.controlPoints || edge.fitPoints) as IPoint[] | undefined;
+        if (controlPts && controlPts.length >= 2) {
+          result.push({
+            handle: generateHandle(),
+            type: "SPLINE",
+            layer,
+            color,
+            vertices: controlPts.map((v) => transformPoint({ x: v.x, y: v.y }, transform)),
+            splineDegree: (edge.degree as number) ?? 3,
+          });
+        }
+      }
+    }
+  }
 }
 
 /**

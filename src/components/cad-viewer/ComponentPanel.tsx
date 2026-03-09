@@ -18,6 +18,7 @@ import {
   ArrowUpDown,
   ArrowLeftRight,
 } from "lucide-react";
+import { ComponentCrossPageBadge } from "./CompositeIndicator";
 
 export function ComponentPanel() {
   const {
@@ -41,26 +42,26 @@ export function ComponentPanel() {
 
   if (!selectedComponentId || !component) {
     return (
-      <div className="p-4 text-[#888] text-sm">
-        <p className="font-medium text-[#555] mb-2">Component Panel</p>
+      <div className="p-4 text-[#999] text-sm">
+        <p className="font-medium text-[#666] mb-2">Component Panel</p>
         <p>Click on a component in the drawing to select it and view its properties.</p>
         {drawing && drawing.components.length > 0 && (
           <div className="mt-4">
-            <p className="text-[#555] font-medium mb-2">
+            <p className="text-[#666] font-medium mb-2">
               Detected Components ({drawing.components.length})
             </p>
             <div className="space-y-1">
               {drawing.components.map((comp) => (
                 <button
                   key={comp.id}
-                  className="w-full text-left px-2 py-1.5 rounded text-xs hover:bg-[#F0F0F0] transition-colors flex items-center gap-2"
+                  className="w-full text-left px-2 py-1.5 rounded text-xs hover:bg-[#EBEBEB] transition-colors flex items-center gap-2"
                   onClick={() => useCADStore.getState().selectComponent(comp.id)}
                 >
                   <span
                     className="w-3 h-3 rounded-sm"
                     style={{ backgroundColor: comp.color }}
                   />
-                  <span className="text-[#333]">{comp.name}</span>
+                  <span className="text-[#0C121D]">{comp.name}</span>
                 </button>
               ))}
             </div>
@@ -101,12 +102,13 @@ export function ComponentPanel() {
             className="w-3 h-3 rounded-sm"
             style={{ backgroundColor: component.color }}
           />
-          <h3 className="font-semibold text-[#222]">{component.name}</h3>
+          <h3 className="font-semibold text-[#0C121D]">{component.name}</h3>
         </div>
         <Badge variant="outline" className="text-xs">
           {component.type}
         </Badge>
-        <p className="text-xs text-[#888] mt-1">Layer: {component.layerName}</p>
+        <p className="text-xs text-[#999] mt-1">Layer: {component.layerName}</p>
+        <ComponentCrossPageBadge componentId={selectedComponentId} />
       </div>
 
       <Separator />
@@ -114,7 +116,7 @@ export function ComponentPanel() {
       {/* Current dimensions */}
       {component.dimensions.length > 0 && (
         <div>
-          <p className="text-xs text-[#555] font-medium mb-2">
+          <p className="text-xs text-[#666] font-medium mb-2">
             Current Dimensions
           </p>
           <div className="space-y-1.5">
@@ -123,8 +125,8 @@ export function ComponentPanel() {
                 key={dim.id}
                 className={`w-full text-left px-2 py-1.5 rounded text-xs flex items-center gap-2 transition-colors ${
                   selectedDimId === dim.id
-                    ? "bg-[#93C90F]/10 text-[#5a7d00]"
-                    : "hover:bg-[#F0F0F0] text-[#333]"
+                    ? "bg-[#93C90F]/20 text-[#5A7D00]"
+                    : "hover:bg-[#EBEBEB] text-[#0C121D]"
                 }`}
                 onClick={() => {
                   setSelectedDimId(dim.id);
@@ -137,7 +139,7 @@ export function ComponentPanel() {
                   <ArrowLeftRight className="w-3 h-3" />
                 )}
                 <span className="font-mono">{dim.displayValue}</span>
-                <span className="text-[#888] ml-auto">{dim.label}</span>
+                <span className="text-[#999] ml-auto">{dim.label}</span>
               </button>
             ))}
           </div>
@@ -148,13 +150,13 @@ export function ComponentPanel() {
 
       {/* Scale mode toggle */}
       <div className="flex items-center justify-between">
-        <Label className="text-xs text-[#555]">Scale Mode</Label>
+        <Label className="text-xs text-[#666]">Scale Mode</Label>
         <div className="flex items-center gap-2">
           <button
             className={`p-1.5 rounded ${
               scaleMode === "linked"
-                ? "bg-[#93C90F]/15 text-[#5a7d00]"
-                : "text-[#888] hover:text-[#333]"
+                ? "bg-[#93C90F]/25 text-[#5A7D00]"
+                : "text-[#999] hover:text-[#0C121D]"
             }`}
             onClick={() => setScaleMode("linked")}
             title="Linked: neighbors adjust"
@@ -164,8 +166,8 @@ export function ComponentPanel() {
           <button
             className={`p-1.5 rounded ${
               scaleMode === "isolated"
-                ? "bg-[#00BFDD]/15 text-[#008fa5]"
-                : "text-[#888] hover:text-[#333]"
+                ? "bg-[#00BFDD]/25 text-[#007A8F]"
+                : "text-[#999] hover:text-[#0C121D]"
             }`}
             onClick={() => setScaleMode("isolated")}
             title="Isolated: only this component changes"
@@ -177,7 +179,7 @@ export function ComponentPanel() {
 
       {/* Uniform scale toggle */}
       <div className="flex items-center justify-between">
-        <Label className="text-xs text-[#555]">Uniform Scale</Label>
+        <Label className="text-xs text-[#666]">Uniform Scale</Label>
         <Switch
           checked={uniformScale}
           onCheckedChange={setUniformScale}
@@ -199,7 +201,7 @@ export function ComponentPanel() {
 
         <TabsContent value="percent" className="space-y-3 mt-3">
           <div>
-            <Label className="text-xs text-[#555]">Scale Percentage</Label>
+            <Label className="text-xs text-[#666]">Scale Percentage</Label>
             <div className="flex gap-2 mt-1">
               <Input
                 type="number"
@@ -209,13 +211,13 @@ export function ComponentPanel() {
                 min="1"
                 max="500"
               />
-              <span className="text-[#888] text-sm self-center">%</span>
+              <span className="text-[#999] text-sm self-center">%</span>
             </div>
             <div className="flex gap-1 mt-2">
               {[75, 90, 100, 110, 125, 150].map((pct) => (
                 <button
                   key={pct}
-                  className="px-2 py-1 text-xs rounded bg-[#F0F0F0] hover:bg-[#E7E7E7] text-[#333]"
+                  className="px-2 py-1 text-xs rounded bg-[#EBEBEB] hover:bg-[#E0E0E0] text-[#0C121D]"
                   onClick={() => setScalePercent(String(pct))}
                 >
                   {pct}%
@@ -234,7 +236,7 @@ export function ComponentPanel() {
 
         <TabsContent value="dimension" className="space-y-3 mt-3">
           <div>
-            <Label className="text-xs text-[#555]">
+            <Label className="text-xs text-[#666]">
               {selectedDimId
                 ? "New Dimension Value"
                 : "Select a dimension above first"}
@@ -262,7 +264,7 @@ export function ComponentPanel() {
 
       {/* History / Undo */}
       <div className="flex items-center justify-between">
-        <span className="text-xs text-[#888]">
+        <span className="text-xs text-[#999]">
           {scaleHistory.length} operation{scaleHistory.length !== 1 ? "s" : ""}
         </span>
         <Button

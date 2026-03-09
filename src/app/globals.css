@@ -50,30 +50,30 @@
 :root {
   /* EnergyLink brand colors */
   --el-green: #93C90F;
-  --el-green-dark: #86BB46;
+  --el-green-dark: #7AB00D;
   --el-cyan: #00BFDD;
-  --el-dark: #222222;
-  --el-gray: #888888;
-  --el-light: #F6F6F6;
-  --el-border: #E7E7E7;
+  --el-dark: #0C121D;
+  --el-gray: #666666;
+  --el-light: #F0F0F0;
+  --el-border: #D4D4D4;
 
   --background: #FFFFFF;
-  --foreground: #222222;
+  --foreground: #0C121D;
   --card: #FFFFFF;
-  --card-foreground: #222222;
+  --card-foreground: #0C121D;
   --popover: #FFFFFF;
-  --popover-foreground: #222222;
+  --popover-foreground: #0C121D;
   --primary: #93C90F;
   --primary-foreground: #FFFFFF;
-  --secondary: #F6F6F6;
+  --secondary: #F0F0F0;
   --secondary-foreground: #333333;
-  --muted: #F6F6F6;
-  --muted-foreground: #888888;
+  --muted: #F0F0F0;
+  --muted-foreground: #666666;
   --accent: #00BFDD;
   --accent-foreground: #FFFFFF;
   --destructive: oklch(0.58 0.22 27);
-  --border: #E7E7E7;
-  --input: #E7E7E7;
+  --border: #D4D4D4;
+  --input: #CBCBCB;
   --ring: #93C90F;
   --chart-1: #93C90F;
   --chart-2: #00BFDD;

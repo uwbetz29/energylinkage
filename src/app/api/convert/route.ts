@@ -3,10 +3,7 @@ import { writeFile, readFile, unlink, mkdir, access, constants } from "fs/promis
 import { join } from "path";
 import { tmpdir, homedir } from "os";
 import { randomUUID } from "crypto";
-import { exec } from "child_process";
-import { promisify } from "util";
-
-const execAsync = promisify(exec);
+import { execAsync } from "@/lib/exec-async";
 
 // Paths to look for dwg2dxf (libredwg) and ODA File Converter
 const DWG2DXF_PATHS = [
