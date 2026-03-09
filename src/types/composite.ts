@@ -144,4 +144,8 @@ export interface AnalyzeRequest {
   messages?: AnalysisMessage[];
   /** User's answers to clarification questions */
   clarificationAnswers?: Array<{ questionId: string; answer: string }>;
+  /** User-provided description of the drawing set */
+  projectContext?: string;
+  /** User-provided description per uploaded file */
+  fileDescriptions?: Array<{ fileName: string; description: string }>;
 }

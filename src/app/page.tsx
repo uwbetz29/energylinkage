@@ -135,6 +135,7 @@ function getEstimatedTime(fileSize: number, ext: string): string {
 interface WizardFile {
   file: File;
   nickname: string;
+  description: string;
 }
 
 /** Extract unique text labels from a drawing for AI analysis */
@@ -292,6 +293,7 @@ export default function StartPage() {
   const [showWizard, setShowWizard] = useState(false);
   const [wizardStep, setWizardStep] = useState(1);
   const [projectName, setProjectName] = useState("");
+  const [projectContext, setProjectContext] = useState("");
   const [wizardFiles, setWizardFiles] = useState<WizardFile[]>([]);
   const [isProcessing, setIsProcessing] = useState(false);
   const [processingStatus, setProcessingStatus] = useState("");
@@ -322,6 +324,7 @@ export default function StartPage() {
   const resetWizard = () => {
     setWizardStep(1);
     setProjectName("");
+    setProjectContext("");
     setWizardFiles([]);
     setIsProcessing(false);
     setProcessingStatus("");
@@ -336,6 +339,7 @@ export default function StartPage() {
     const newFiles: WizardFile[] = Array.from(files).map((f) => ({
       file: f,
       nickname: f.name.replace(/\.(dxf|dwg|pdf)$/i, ""),
+      description: "",
     }));
     setWizardFiles((prev) => [...prev, ...newFiles]);
     setWizardError("");
@@ -447,7 +451,7 @@ export default function StartPage() {
     try {
       // Create project
       setProcessingStatus("Creating project...");
-      const project = await createProject(projectName.trim());
+      const project = await createProject(projectName.trim(), projectContext.trim() || undefined);
 
       // Save each file as a drawing and open as tab
       for (let i = 0; i < batchResults.length; i++) {
@@ -705,7 +709,15 @@ export default function StartPage() {
                   onKeyDown={(e) => { if (e.key === "Enter" && projectName.trim()) setWizardStep(2); }}
                   autoFocus
                 />
-                <p className="text-xs text-[#999] mt-2">Tip: Use the site name and system type for easy identification.</p>
+                <label className="text-sm font-medium text-[#666] mb-1 block mt-4">Describe These Drawings <span className="font-normal text-[#999]">(optional)</span></label>
+                <textarea
+                  value={projectContext}
+                  onChange={(e) => setProjectContext(e.target.value)}
+                  placeholder="e.g., SCR/CO catalyst system for a GE 7FA gas turbine. Three sheets: front elevation, side elevation, and nozzle detail."
+                  rows={3}
+                  className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring resize-none"
+                />
+                <p className="text-xs text-[#999] mt-2">This context helps AI better identify components and link dimensions across pages.</p>
               </div>
               <DialogFooter>
                 <Button variant="outline" onClick={() => setShowWizard(false)}>Cancel</Button>
@@ -821,6 +833,20 @@ export default function StartPage() {
                             placeholder="Drawing nickname"
                             className="h-8 text-sm"
                           />
+                          <Input
+                            value={wf.description}
+                            onChange={(e) =>
+                              setWizardFiles((prev) =>
+                                prev.map((f, i) =>
+                                  i === idx
+                                    ? { ...f, description: e.target.value }
+                                    : f
+                                )
+                              )
+                            }
+                            placeholder="What does this drawing show? e.g., Front elevation of the full stack assembly"
+                            className="h-8 text-sm text-[#666]"
+                          />
                         </div>
                       );
                     })}
@@ -882,6 +908,10 @@ export default function StartPage() {
                     pageSummaries={pageSummaries}
                     onComplete={(analysis) => handleFinishWizard(analysis)}
                     onSkip={() => handleFinishWizard()}
+                    projectContext={projectContext.trim() || undefined}
+                    fileDescriptions={wizardFiles
+                      .filter((wf) => wf.description.trim())
+                      .map((wf) => ({ fileName: wf.file.name, description: wf.description.trim() }))}
                   />
                 )}
 

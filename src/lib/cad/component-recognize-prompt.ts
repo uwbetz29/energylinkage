@@ -48,9 +48,14 @@ Be conservative with confidence scores. Only assign high confidence (>0.8) when 
 
 export function buildRecognitionUserMessage(
   summary: GeometrySummary,
-  drawingBounds: { minX: number; minY: number; maxX: number; maxY: number }
+  drawingBounds: { minX: number; minY: number; maxX: number; maxY: number },
+  userContext?: string
 ): string {
   const parts: string[] = [];
+
+  if (userContext) {
+    parts.push(`## User Notes\n${userContext}\n`);
+  }
 
   parts.push(`## Drawing Bounds
 minX: ${drawingBounds.minX.toFixed(1)}, minY: ${drawingBounds.minY.toFixed(1)}

@@ -57,7 +57,26 @@ IMPORTANT:
 }
 
 export function buildCompositeUserMessage(request: AnalyzeRequest): string {
-  let msg = `DRAWING SET ANALYSIS REQUEST\n\n`;
+  let msg = "";
+
+  // Prepend user-provided context if available
+  if (request.projectContext || (request.fileDescriptions && request.fileDescriptions.length > 0)) {
+    msg += `USER-PROVIDED CONTEXT:\n`;
+    if (request.projectContext) {
+      msg += `Description: ${request.projectContext}\n`;
+    }
+    if (request.fileDescriptions && request.fileDescriptions.length > 0) {
+      msg += `\nFile descriptions:\n`;
+      for (const fd of request.fileDescriptions) {
+        if (fd.description.trim()) {
+          msg += `  - ${fd.fileName}: "${fd.description}"\n`;
+        }
+      }
+    }
+    msg += `\n---\n\n`;
+  }
+
+  msg += `DRAWING SET ANALYSIS REQUEST\n\n`;
   msg += `Total pages: ${request.pageSummaries.length}\n\n`;
 
   for (const page of request.pageSummaries) {

@@ -17,6 +17,8 @@ interface AIAnalysisChatProps {
   pageSummaries: PageSummary[];
   onComplete: (analysis: CompositeAnalysis) => void;
   onSkip: () => void;
+  projectContext?: string;
+  fileDescriptions?: Array<{ fileName: string; description: string }>;
 }
 
 type AnalysisStatus = "idle" | "analyzing" | "asking" | "complete" | "error";
@@ -25,6 +27,8 @@ export function AIAnalysisChat({
   pageSummaries,
   onComplete,
   onSkip,
+  projectContext,
+  fileDescriptions,
 }: AIAnalysisChatProps) {
   const [status, setStatus] = useState<AnalysisStatus>("idle");
   const [messages, setMessages] = useState<AnalysisMessage[]>([]);
@@ -58,6 +62,8 @@ export function AIAnalysisChat({
         pageSummaries,
         messages: messages.length > 0 ? messages : undefined,
         clarificationAnswers,
+        projectContext,
+        fileDescriptions,
       };
 
       const res = await fetch("/api/ai-analyze", {
