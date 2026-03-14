@@ -7,8 +7,8 @@ import { getDb } from "@/lib/db";
 export const { handlers, auth, signIn, signOut } = NextAuth({
   providers: [
     Google({
-      clientId: process.env.AUTH_GOOGLE_ID!,
-      clientSecret: process.env.AUTH_GOOGLE_SECRET!,
+      clientId: process.env.AUTH_GOOGLE_ID?.trim(),
+      clientSecret: process.env.AUTH_GOOGLE_SECRET?.trim(),
       authorization: {
         params: {
           prompt: "consent",
