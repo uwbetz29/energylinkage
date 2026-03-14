@@ -1,12 +1,10 @@
 "use client";
 
 import { useState } from "react";
-import { createClient } from "@/lib/supabase/client";
 import Image from "next/image";
 import Link from "next/link";
 
 export default function ResetPasswordPage() {
-  const [supabase] = useState(() => createClient());
   const [email, setEmail] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -17,14 +15,19 @@ export default function ResetPasswordPage() {
     setError("");
     setLoading(true);
 
-    const { error } = await supabase.auth.resetPasswordForEmail(email, {
-      redirectTo: `${window.location.origin}/auth/update-password`,
-    });
-
-    if (error) {
-      setError(error.message);
-    } else {
+    try {
+      const res = await fetch("/api/auth/reset-password", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email }),
+      });
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.error || "Failed to send reset email");
+      }
       setSent(true);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Something went wrong");
     }
     setLoading(false);
   };
@@ -60,7 +63,7 @@ export default function ResetPasswordPage() {
           {sent ? (
             <div className="space-y-4">
               <div className="p-3 rounded-xl bg-green-50 border border-green-200 text-sm text-green-700">
-                Check your email for a password reset link.
+                If an account exists with that email, you&apos;ll receive a password reset link shortly.
               </div>
               <Link
                 href="/login"

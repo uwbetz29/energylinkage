@@ -2,14 +2,13 @@
 
 import { useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { createClient } from "@/lib/supabase/client";
+import { signIn } from "next-auth/react";
 import Image from "next/image";
 import Link from "next/link";
 
 export function LoginForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const [supabase] = useState(() => createClient());
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -20,14 +19,7 @@ export function LoginForm() {
 
   const handleGoogleLogin = async () => {
     setError("");
-    const { error } = await supabase.auth.signInWithOAuth({
-      provider: "google",
-      options: {
-        redirectTo: `${window.location.origin}/auth/callback`,
-        queryParams: { prompt: "select_account" },
-      },
-    });
-    if (error) setError(error.message);
+    await signIn("google", { callbackUrl: "/" });
   };
 
   const handleEmailSignIn = async (e: React.FormEvent) => {
@@ -35,13 +27,14 @@ export function LoginForm() {
     setError("");
     setLoading(true);
 
-    const { error } = await supabase.auth.signInWithPassword({
+    const result = await signIn("credentials", {
       email,
       password,
+      redirect: false,
     });
 
-    if (error) {
-      setError(error.message);
+    if (result?.error) {
+      setError("Invalid email or password");
     } else {
       router.push("/");
       router.refresh();

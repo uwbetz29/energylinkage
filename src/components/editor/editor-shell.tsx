@@ -10,7 +10,7 @@ import { NLBar } from "./nl-bar";
 import { StageNav } from "./stage-nav";
 import Link from "next/link";
 import { ArrowLeft, Undo2, Download, Loader2 } from "lucide-react";
-import { getProject, getProjectPdfUrl } from "@/app/projects/actions";
+import { getProject } from "@/app/projects/actions";
 
 export function EditorShell() {
   const searchParams = useSearchParams();
@@ -44,10 +44,8 @@ export function EditorShell() {
 
         setProject(project.id, project.name);
 
-        if (project.pdf_path) {
-          const signedUrl = await getProjectPdfUrl(projectId!);
-          if (cancelled) return;
-          setPdfUrl(signedUrl);
+        if (project.pdf_url) {
+          setPdfUrl(project.pdf_url);
         }
       } catch (err) {
         if (!cancelled) {

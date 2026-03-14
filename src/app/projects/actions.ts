@@ -1,101 +1,126 @@
 "use server";
 
-import { createClient } from "@/lib/supabase/server";
+import { auth } from "@/auth";
+import { getDb } from "@/lib/db";
+import { put, del } from "@vercel/blob";
 
 export interface Project {
   id: string;
   name: string;
-  pdf_path: string | null;
+  pdf_url: string | null;
   pdf_filename: string | null;
   created_at: string;
   updated_at: string;
 }
 
 async function requireAuth() {
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) throw new Error("Not authenticated");
-  return { supabase, user };
+  const session = await auth();
+  if (!session?.user?.id) throw new Error("Not authenticated");
+  return session.user;
 }
 
 export async function createProject(name: string): Promise<{ id: string }> {
-  const { supabase, user } = await requireAuth();
+  const user = await requireAuth();
+  const sql = getDb();
 
-  const { data, error } = await supabase
-    .from("projects")
-    .insert({ name, user_id: user.id })
-    .select("id")
-    .single();
+  const rows = await sql`
+    INSERT INTO projects (user_id, name)
+    VALUES (${user.id}, ${name})
+    RETURNING id
+  `;
 
-  if (error) throw new Error(error.message);
-  return { id: data.id };
+  return { id: rows[0].id as string };
 }
 
 export async function listProjects(): Promise<Project[]> {
-  const { supabase } = await requireAuth();
+  const user = await requireAuth();
+  const sql = getDb();
 
-  const { data, error } = await supabase
-    .from("projects")
-    .select("id, name, pdf_path, pdf_filename, created_at, updated_at")
-    .order("updated_at", { ascending: false });
+  const rows = await sql`
+    SELECT id, name, pdf_url, pdf_filename, created_at, updated_at
+    FROM projects
+    WHERE user_id = ${user.id}
+    ORDER BY updated_at DESC
+  `;
 
-  if (error) throw new Error(error.message);
-  return data || [];
+  return rows as unknown as Project[];
 }
 
 export async function getProject(projectId: string): Promise<Project> {
-  const { supabase } = await requireAuth();
+  const user = await requireAuth();
+  const sql = getDb();
 
-  const { data, error } = await supabase
-    .from("projects")
-    .select("id, name, pdf_path, pdf_filename, created_at, updated_at")
-    .eq("id", projectId)
-    .single();
+  const rows = await sql`
+    SELECT id, name, pdf_url, pdf_filename, created_at, updated_at
+    FROM projects
+    WHERE id = ${projectId} AND user_id = ${user.id}
+  `;
 
-  if (error) throw new Error(error.message);
-  if (!data) throw new Error("Project not found");
-  return data;
+  if (rows.length === 0) throw new Error("Project not found");
+  return rows[0] as unknown as Project;
 }
 
-export async function getProjectPdfUrl(
-  projectId: string
-): Promise<string> {
-  const { supabase } = await requireAuth();
+export async function getProjectPdfUrl(projectId: string): Promise<string> {
+  const user = await requireAuth();
+  const sql = getDb();
 
-  const { data: project, error } = await supabase
-    .from("projects")
-    .select("pdf_path")
-    .eq("id", projectId)
-    .single();
+  const rows = await sql`
+    SELECT pdf_url FROM projects
+    WHERE id = ${projectId} AND user_id = ${user.id}
+  `;
 
-  if (error) throw new Error(error.message);
-  if (!project?.pdf_path) throw new Error("No PDF uploaded for this project");
+  if (rows.length === 0) throw new Error("Project not found");
+  if (!rows[0].pdf_url) throw new Error("No PDF uploaded for this project");
 
-  const { data: signed, error: signError } = await supabase.storage
-    .from("project-pdfs")
-    .createSignedUrl(project.pdf_path, 3600);
-
-  if (signError) throw new Error(signError.message);
-  return signed.signedUrl;
+  return rows[0].pdf_url as string;
 }
 
-export async function updateProjectPdf(
+export async function uploadProjectPdf(
   projectId: string,
-  pdfPath: string,
-  pdfFilename: string
-): Promise<void> {
-  const { supabase } = await requireAuth();
+  formData: FormData
+): Promise<{ url: string }> {
+  const user = await requireAuth();
+  const sql = getDb();
 
-  const { error } = await supabase
-    .from("projects")
-    .update({
-      pdf_path: pdfPath,
-      pdf_filename: pdfFilename,
-      updated_at: new Date().toISOString(),
-    })
-    .eq("id", projectId);
+  // Verify project ownership
+  const rows = await sql`
+    SELECT id FROM projects WHERE id = ${projectId} AND user_id = ${user.id}
+  `;
+  if (rows.length === 0) throw new Error("Project not found");
 
-  if (error) throw new Error(error.message);
+  const file = formData.get("file") as File;
+  if (!file) throw new Error("No file provided");
+
+  // Upload to Vercel Blob
+  const blob = await put(`projects/${user.id}/${projectId}/${file.name}`, file, {
+    access: "public",
+  });
+
+  // Update project row
+  await sql`
+    UPDATE projects
+    SET pdf_url = ${blob.url}, pdf_filename = ${file.name}, updated_at = now()
+    WHERE id = ${projectId}
+  `;
+
+  return { url: blob.url };
+}
+
+export async function deleteProjectPdf(projectId: string): Promise<void> {
+  const user = await requireAuth();
+  const sql = getDb();
+
+  const rows = await sql`
+    SELECT pdf_url FROM projects WHERE id = ${projectId} AND user_id = ${user.id}
+  `;
+  if (rows.length === 0) throw new Error("Project not found");
+
+  if (rows[0].pdf_url) {
+    await del(rows[0].pdf_url as string);
+  }
+
+  await sql`
+    UPDATE projects SET pdf_url = NULL, pdf_filename = NULL, updated_at = now()
+    WHERE id = ${projectId}
+  `;
 }

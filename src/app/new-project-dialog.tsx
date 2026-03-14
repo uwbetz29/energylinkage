@@ -10,8 +10,7 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { useAuth } from "@/components/providers/auth-provider";
-import { createProject, updateProjectPdf } from "@/app/projects/actions";
+import { createProject, uploadProjectPdf } from "@/app/projects/actions";
 import { Upload } from "lucide-react";
 
 interface NewProjectDialogProps {
@@ -25,7 +24,6 @@ export function NewProjectDialog({
   onClose,
   onCreated,
 }: NewProjectDialogProps) {
-  const { user, supabase } = useAuth();
   const [name, setName] = useState("");
   const [file, setFile] = useState<File | null>(null);
   const [error, setError] = useState("");
@@ -57,20 +55,14 @@ export function NewProjectDialog({
       setProgress("Creating project...");
       const { id: projectId } = await createProject(name.trim());
 
-      // 2. Upload PDF to Supabase Storage
+      // 2. Upload PDF via server action
       setProgress("Uploading drawing...");
-      const storagePath = `${user!.id}/${projectId}/${file.name}`;
-      const { error: uploadError } = await supabase.storage
-        .from("project-pdfs")
-        .upload(storagePath, file);
+      const formData = new FormData();
+      formData.append("file", file);
+      await uploadProjectPdf(projectId, formData);
 
-      if (uploadError) throw new Error(uploadError.message);
-
-      // 3. Save storage path on project row
-      setProgress("Finalizing...");
-      await updateProjectPdf(projectId, storagePath, file.name);
-
-      // 4. Navigate to editor
+      // 3. Navigate to editor
+      setProgress("Opening editor...");
       onCreated(projectId);
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Failed to create project");
